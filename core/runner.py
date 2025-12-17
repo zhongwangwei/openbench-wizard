@@ -94,14 +94,21 @@ class EvaluationRunner(QThread):
 
             self.log_message.emit(f"Working directory: {project_root}")
 
-            # Start process
+            # Start process with clean environment (avoid PyInstaller conflicts)
+            env = os.environ.copy()
+            # Remove PyInstaller-specific environment variables that can cause conflicts
+            for var in ['LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH',
+                        '_MEIPASS', '_MEIPASS2', 'TCL_LIBRARY', 'TK_LIBRARY']:
+                env.pop(var, None)
+
             self._process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                cwd=project_root
+                cwd=project_root,
+                env=env
             )
 
             # Read output
