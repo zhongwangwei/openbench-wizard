@@ -1,0 +1,100 @@
+name: Build Executables
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: OpenBench_Wizard.exe
+            output_name: OpenBench_Wizard_Windows
+          - os: macos-latest
+            artifact_name: OpenBench_Wizard
+            output_name: OpenBench_Wizard_macOS
+          - os: ubuntu-latest
+            artifact_name: OpenBench_Wizard
+            output_name: OpenBench_Wizard_Linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller pyside6 pyyaml psutil
+
+    - name: Build executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        pyinstaller --clean --onefile --windowed --name "OpenBench_Wizard" main.py
+
+    - name: Build executable (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        pyinstaller --clean --onefile --windowed --name "OpenBench_Wizard" main.py
+
+    - name: Build executable (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        pyinstaller --clean --onefile --name "OpenBench_Wizard" main.py
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.output_name }}
+        path: dist/${{ matrix.artifact_name }}
+        retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Prepare release files
+      run: |
+        mkdir -p release
+        cp artifacts/OpenBench_Wizard_Windows/OpenBench_Wizard.exe release/OpenBench_Wizard_Windows.exe
+        cp artifacts/OpenBench_Wizard_macOS/OpenBench_Wizard release/OpenBench_Wizard_macOS
+        cp artifacts/OpenBench_Wizard_Linux/OpenBench_Wizard release/OpenBench_Wizard_Linux
+        chmod +x release/OpenBench_Wizard_macOS release/OpenBench_Wizard_Linux
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          release/OpenBench_Wizard_Windows.exe
+          release/OpenBench_Wizard_macOS
+          release/OpenBench_Wizard_Linux
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
