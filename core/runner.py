@@ -81,16 +81,10 @@ class EvaluationRunner(QThread):
 
             self.log_message.emit(f"Running: {' '.join(cmd)}")
 
-            # Determine project root (where openbench directory is)
-            config_dir = os.path.dirname(os.path.abspath(self.config_path))
-            # Navigate up from nml/nml-yaml to project root
-            project_root = os.path.dirname(os.path.dirname(config_dir))
-            if not os.path.exists(os.path.join(project_root, "openbench")):
-                # Try one level up
-                project_root = os.path.dirname(config_dir)
-            if not os.path.exists(os.path.join(project_root, "openbench")):
-                # Fall back to current working directory
-                project_root = os.getcwd()
+            # Determine project root from the OpenBench script location
+            # openbench_path is like: /path/to/OpenBench/openbench/openbench.py
+            # project_root should be: /path/to/OpenBench
+            project_root = os.path.dirname(os.path.dirname(openbench_path))
 
             self.log_message.emit(f"Working directory: {project_root}")
 
