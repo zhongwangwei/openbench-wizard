@@ -70,8 +70,11 @@ class EvaluationRunner(QThread):
                 self.finished_signal.emit(False, "Could not find OpenBench script")
                 return
 
+            # Find Python interpreter (not the bundled executable)
+            python_exe = self._find_python_interpreter()
+
             cmd = [
-                sys.executable,
+                python_exe,
                 openbench_path,
                 self.config_path
             ]
@@ -154,6 +157,43 @@ class EvaluationRunner(QThread):
                 "Error", "", "", str(e)
             )
             self.finished_signal.emit(False, str(e))
+
+    def _find_python_interpreter(self) -> str:
+        """Find a Python interpreter to run OpenBench."""
+        import shutil
+
+        # Check if sys.executable is a real Python interpreter (not bundled app)
+        if sys.executable and 'python' in sys.executable.lower():
+            return sys.executable
+
+        # Common Python executable names
+        python_names = ['python3', 'python', 'python3.11', 'python3.10', 'python3.12']
+
+        # Check PATH
+        for name in python_names:
+            path = shutil.which(name)
+            if path:
+                self.log_message.emit(f"Using Python: {path}")
+                return path
+
+        # Common locations
+        common_paths = [
+            '/usr/bin/python3',
+            '/usr/local/bin/python3',
+            '/opt/homebrew/bin/python3',
+            os.path.expanduser('~/miniforge3/bin/python'),
+            os.path.expanduser('~/miniconda3/bin/python'),
+            os.path.expanduser('~/anaconda3/bin/python'),
+        ]
+
+        for path in common_paths:
+            if os.path.exists(path):
+                self.log_message.emit(f"Using Python: {path}")
+                return path
+
+        # Fallback - hope python3 works
+        self.log_message.emit("Warning: Could not find Python interpreter, trying 'python3'")
+        return 'python3'
 
     def _find_openbench_script(self) -> Optional[str]:
         """Find the OpenBench main script."""
