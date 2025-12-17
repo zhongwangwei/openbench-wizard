@@ -48,7 +48,7 @@ jobs:
 
     - name: Build executable
       run: |
-        pyinstaller --clean build.spec
+        pyinstaller --clean openbench_wizard.spec
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
