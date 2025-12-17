@@ -1,0 +1,209 @@
+# -*- coding: utf-8 -*-
+"""
+Wizard flow controller - manages page navigation and visibility.
+"""
+
+from typing import List, Dict, Any, Optional
+from PySide6.QtCore import QObject, Signal
+
+
+class WizardController(QObject):
+    """Controls wizard page flow and configuration state."""
+
+    # Signals
+    page_changed = Signal(str)  # Emitted when current page changes
+    config_updated = Signal(dict)  # Emitted when config is modified
+    pages_visibility_changed = Signal()  # Emitted when visible pages change
+
+    # All possible pages in order
+    ALL_PAGES = [
+        "general",
+        "evaluation_items",
+        "metrics",
+        "scores",
+        "comparisons",
+        "statistics",
+        "ref_data",
+        "sim_data",
+        "preview",
+        "run_monitor",
+    ]
+
+    # Page display names
+    PAGE_NAMES = {
+        "general": "General",
+        "evaluation_items": "Evaluation Items",
+        "metrics": "Metrics",
+        "scores": "Scores",
+        "comparisons": "Comparisons",
+        "statistics": "Statistics",
+        "ref_data": "Reference Data",
+        "sim_data": "Simulation Data",
+        "preview": "Preview & Export",
+        "run_monitor": "Run & Monitor",
+    }
+
+    # Conditional pages and their toggle keys
+    CONDITIONAL_PAGES = {
+        "comparisons": "comparison",
+        "statistics": "statistics",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._config: Dict[str, Any] = self._default_config()
+        self._current_page: str = "general"
+
+    def _default_config(self) -> Dict[str, Any]:
+        """Return default configuration structure."""
+        return {
+            "general": {
+                "basename": "",
+                "basedir": "./output",
+                "compare_tim_res": "month",
+                "compare_tzone": 0.0,
+                "compare_grid_res": 2.0,
+                "syear": 2000,
+                "eyear": 2020,
+                "min_lat": -90.0,
+                "max_lat": 90.0,
+                "min_lon": -180.0,
+                "max_lon": 180.0,
+                "num_cores": 4,
+                "evaluation": True,
+                "comparison": True,
+                "statistics": False,
+                "debug_mode": False,
+                "generate_report": True,
+                "IGBP_groupby": True,
+                "PFT_groupby": True,
+                "Climate_zone_groupby": True,
+            },
+            "evaluation_items": {},
+            "metrics": {},
+            "scores": {},
+            "comparisons": {},
+            "statistics": {},
+            "ref_data": {"general": {}, "def_nml": {}},
+            "sim_data": {"general": {}, "def_nml": {}},
+        }
+
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Get current configuration."""
+        return self._config
+
+    @config.setter
+    def config(self, value: Dict[str, Any]):
+        """Set configuration and emit signal."""
+        self._config = value
+        self.config_updated.emit(self._config)
+        self.pages_visibility_changed.emit()
+
+    def update_config(self, section: str, key: str, value: Any):
+        """Update a specific config value."""
+        if section not in self._config:
+            self._config[section] = {}
+        self._config[section][key] = value
+        self.config_updated.emit(self._config)
+
+        # Check if this affects page visibility
+        if section == "general" and key in self.CONDITIONAL_PAGES.values():
+            self.pages_visibility_changed.emit()
+
+    def update_section(self, section: str, data: Dict[str, Any]):
+        """Update entire config section."""
+        self._config[section] = data
+        self.config_updated.emit(self._config)
+
+        # Check if this affects page visibility
+        if section == "general":
+            self.pages_visibility_changed.emit()
+
+    def get_visible_pages(self) -> List[str]:
+        """Return list of currently visible pages based on config."""
+        visible = []
+        general = self._config.get("general", {})
+
+        for page in self.ALL_PAGES:
+            if page in self.CONDITIONAL_PAGES:
+                toggle_key = self.CONDITIONAL_PAGES[page]
+                if general.get(toggle_key, False):
+                    visible.append(page)
+            else:
+                visible.append(page)
+
+        return visible
+
+    def get_page_name(self, page_id: str) -> str:
+        """Get display name for a page."""
+        return self.PAGE_NAMES.get(page_id, page_id)
+
+    def is_page_visible(self, page_id: str) -> bool:
+        """Check if a page should be visible."""
+        return page_id in self.get_visible_pages()
+
+    @property
+    def current_page(self) -> str:
+        """Get current page ID."""
+        return self._current_page
+
+    @current_page.setter
+    def current_page(self, page_id: str):
+        """Set current page and emit signal."""
+        if page_id in self.get_visible_pages():
+            self._current_page = page_id
+            self.page_changed.emit(page_id)
+
+    def next_page(self) -> Optional[str]:
+        """Get next visible page, or None if at end."""
+        visible = self.get_visible_pages()
+        try:
+            idx = visible.index(self._current_page)
+            if idx + 1 < len(visible):
+                return visible[idx + 1]
+        except ValueError:
+            pass
+        return None
+
+    def prev_page(self) -> Optional[str]:
+        """Get previous visible page, or None if at start."""
+        visible = self.get_visible_pages()
+        try:
+            idx = visible.index(self._current_page)
+            if idx > 0:
+                return visible[idx - 1]
+        except ValueError:
+            pass
+        return None
+
+    def go_next(self) -> bool:
+        """Navigate to next page. Returns True if successful."""
+        next_p = self.next_page()
+        if next_p:
+            self.current_page = next_p
+            return True
+        return False
+
+    def go_prev(self) -> bool:
+        """Navigate to previous page. Returns True if successful."""
+        prev_p = self.prev_page()
+        if prev_p:
+            self.current_page = prev_p
+            return True
+        return False
+
+    def go_to_page(self, page_id: str) -> bool:
+        """Navigate to specific page. Returns True if successful."""
+        if self.is_page_visible(page_id):
+            self.current_page = page_id
+            return True
+        return False
+
+    def reset(self):
+        """Reset to default state."""
+        self._config = self._default_config()
+        self._current_page = "general"
+        self.config_updated.emit(self._config)
+        self.pages_visibility_changed.emit()
+        self.page_changed.emit(self._current_page)

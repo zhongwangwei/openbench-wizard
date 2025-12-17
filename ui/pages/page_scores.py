@@ -1,0 +1,43 @@
+# -*- coding: utf-8 -*-
+"""
+Scores selection page.
+"""
+
+from ui.pages.base_page import BasePage
+from ui.widgets import CheckboxGroup
+
+
+SCORES_ITEMS = {
+    "Scores": [
+        "nBiasScore", "nRMSEScore", "nPhaseScore", "nIavScore",
+        "nSpatialScore", "Overall_Score", "The_Ideal_Point_score"
+    ],
+}
+
+
+class PageScores(BasePage):
+    """Scores selection page."""
+
+    PAGE_ID = "scores"
+    PAGE_TITLE = "Scores"
+    PAGE_SUBTITLE = "Select scoring methods"
+
+    def _setup_content(self):
+        """Setup page content."""
+        self.checkbox_group = CheckboxGroup(SCORES_ITEMS)
+        self.checkbox_group.selection_changed.connect(self._on_selection_changed)
+        self.content_layout.addWidget(self.checkbox_group)
+
+    def _on_selection_changed(self, selection):
+        """Handle selection changes."""
+        self.save_to_config()
+
+    def load_from_config(self):
+        """Load from config."""
+        scores = self.controller.config.get("scores", {})
+        self.checkbox_group.set_selection(scores)
+
+    def save_to_config(self):
+        """Save to config."""
+        selection = self.checkbox_group.get_selection()
+        self.controller.update_section("scores", selection)
