@@ -158,27 +158,81 @@ class EvaluationRunner(QThread):
     def _find_openbench_script(self) -> Optional[str]:
         """Find the OpenBench main script."""
         config_dir = os.path.dirname(os.path.abspath(self.config_path))
+        home_dir = os.path.expanduser("~")
 
         # Look for openbench.py in common locations
         possible_paths = [
             # Relative to config file (nml/nml-yaml -> project root -> openbench)
             os.path.join(config_dir, "..", "..", "openbench", "openbench.py"),
+            os.path.join(config_dir, "..", "..", "..", "openbench", "openbench.py"),
             os.path.join(config_dir, "..", "openbench", "openbench.py"),
             # Relative to current working directory
             os.path.join(os.getcwd(), "openbench", "openbench.py"),
-            # Absolute fallback
-            "openbench/openbench.py",
+            # Common user directories
+            os.path.join(home_dir, "Desktop", "OpenBench", "openbench", "openbench.py"),
+            os.path.join(home_dir, "Documents", "OpenBench", "openbench", "openbench.py"),
+            os.path.join(home_dir, "OpenBench", "openbench", "openbench.py"),
+            # Check if executable is in OpenBench directory
+            os.path.join(os.path.dirname(sys.executable), "..", "openbench", "openbench.py"),
+            os.path.join(os.path.dirname(sys.executable), "openbench", "openbench.py"),
         ]
 
-        self.log_message.emit(f"Looking for OpenBench script...")
+        # Also search in parent directories of config file
+        parent = os.path.dirname(config_dir)
+        for _ in range(5):  # Search up to 5 levels up
+            check_path = os.path.join(parent, "openbench", "openbench.py")
+            if check_path not in possible_paths:
+                possible_paths.append(check_path)
+            parent = os.path.dirname(parent)
+
+        self.log_message.emit("Looking for OpenBench script...")
         for path in possible_paths:
             abs_path = os.path.abspath(path)
             self.log_message.emit(f"  Checking: {abs_path}")
             if os.path.exists(abs_path):
                 self.log_message.emit(f"  Found: {abs_path}")
+                # Save found path for future reference
+                self._save_openbench_path(os.path.dirname(os.path.dirname(abs_path)))
                 return abs_path
 
+        # Try to load saved path
+        saved_path = self._load_openbench_path()
+        if saved_path:
+            script_path = os.path.join(saved_path, "openbench", "openbench.py")
+            if os.path.exists(script_path):
+                self.log_message.emit(f"  Using saved path: {script_path}")
+                return script_path
+
         self.log_message.emit("OpenBench script not found in any expected location")
+        return None
+
+    def _get_config_file_path(self) -> str:
+        """Get path to wizard config file."""
+        home_dir = os.path.expanduser("~")
+        config_dir = os.path.join(home_dir, ".openbench_wizard")
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, "config.txt")
+
+    def _save_openbench_path(self, path: str):
+        """Save OpenBench directory path for future use."""
+        try:
+            config_file = self._get_config_file_path()
+            with open(config_file, 'w') as f:
+                f.write(path)
+        except Exception:
+            pass
+
+    def _load_openbench_path(self) -> Optional[str]:
+        """Load saved OpenBench directory path."""
+        try:
+            config_file = self._get_config_file_path()
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    path = f.read().strip()
+                    if os.path.exists(path):
+                        return path
+        except Exception:
+            pass
         return None
 
     def _parse_progress(self, line: str, current_progress: float) -> tuple:

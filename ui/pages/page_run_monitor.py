@@ -7,7 +7,7 @@ import os
 import subprocess
 import platform
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from ui.pages.base_page import BasePage
 from ui.widgets import ProgressDashboard, TaskStatus
@@ -96,7 +96,60 @@ class PageRunMonitor(BasePage):
             self.dashboard.set_progress(100)
             QMessageBox.information(self, "Complete", message)
         else:
-            QMessageBox.warning(self, "Failed", message)
+            # Check if it's an OpenBench not found error
+            if "Could not find OpenBench" in message:
+                self._prompt_openbench_location()
+            else:
+                QMessageBox.warning(self, "Failed", message)
+
+    def _prompt_openbench_location(self):
+        """Prompt user to select OpenBench directory."""
+        reply = QMessageBox.question(
+            self,
+            "OpenBench Not Found",
+            "Could not find the OpenBench directory automatically.\n\n"
+            "Would you like to select it manually?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            dir_path = QFileDialog.getExistingDirectory(
+                self,
+                "Select OpenBench Directory",
+                os.path.expanduser("~"),
+                QFileDialog.ShowDirsOnly
+            )
+
+            if dir_path:
+                # Verify it's a valid OpenBench directory
+                script_path = os.path.join(dir_path, "openbench", "openbench.py")
+                if os.path.exists(script_path):
+                    # Save the path
+                    self._save_openbench_path(dir_path)
+                    QMessageBox.information(
+                        self,
+                        "Success",
+                        f"OpenBench directory saved:\n{dir_path}\n\n"
+                        "Please click Run again."
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Directory",
+                        f"The selected directory does not contain openbench/openbench.py:\n{dir_path}"
+                    )
+
+    def _save_openbench_path(self, path: str):
+        """Save OpenBench directory path."""
+        try:
+            home_dir = os.path.expanduser("~")
+            config_dir = os.path.join(home_dir, ".openbench_wizard")
+            os.makedirs(config_dir, exist_ok=True)
+            config_file = os.path.join(config_dir, "config.txt")
+            with open(config_file, 'w') as f:
+                f.write(path)
+        except Exception:
+            pass
 
     def _on_pause(self):
         """Handle pause request."""
