@@ -53,7 +53,9 @@ class PagePreview(BasePage):
             mode="directory",
             placeholder="Select export directory"
         )
-        self.export_path.set_path("./nml/nml-yaml/")
+        # Set default to OpenBench nml-yaml directory if available
+        default_export = self._get_default_export_path()
+        self.export_path.set_path(default_export)
         export_layout.addWidget(self.export_path, 1)
 
         self.content_layout.addLayout(export_layout)
@@ -101,10 +103,19 @@ class PagePreview(BasePage):
 
     def _export_all(self):
         """Export all NML files."""
+        import os
+
         output_dir = self.export_path.path()
         if not output_dir:
             QMessageBox.warning(self, "Error", "Please select an export directory.")
             return
+
+        # If path is relative, resolve it relative to OpenBench root
+        if not os.path.isabs(output_dir):
+            openbench_root = self._get_openbench_root()
+            if output_dir.startswith("./"):
+                output_dir = output_dir[2:]
+            output_dir = os.path.join(openbench_root, output_dir)
 
         try:
             files = self.config_manager.export_all(
@@ -120,12 +131,62 @@ class PagePreview(BasePage):
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
+    def _get_openbench_root(self) -> str:
+        """Get the OpenBench root directory."""
+        import os
+        import sys
+
+        # Try to load saved path first
+        try:
+            home_dir = os.path.expanduser("~")
+            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    path = f.read().strip()
+                    if os.path.exists(path):
+                        return path
+        except Exception:
+            pass
+
+        # Search common locations
+        possible_roots = [
+            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "OpenBench"),
+            os.path.dirname(os.path.dirname(sys.executable)) if sys.executable else None,
+        ]
+
+        for root in possible_roots:
+            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
+                return root
+
+        # Fallback to current directory
+        return os.getcwd()
+
+    def _get_default_export_path(self) -> str:
+        """Get the default export path (OpenBench/nml/nml-yaml)."""
+        import os
+        openbench_root = self._get_openbench_root()
+        nml_yaml_path = os.path.join(openbench_root, "nml", "nml-yaml")
+        if os.path.exists(nml_yaml_path):
+            return nml_yaml_path
+        return "./nml/nml-yaml/"
+
     def export_and_run(self) -> bool:
         """Export files and trigger run. Returns True if successful."""
+        import os
+
         base_output_dir = self.export_path.path()
         if not base_output_dir:
             QMessageBox.warning(self, "Error", "Please select an export directory.")
             return False
+
+        # If path is relative, resolve it relative to OpenBench root
+        if not os.path.isabs(base_output_dir):
+            openbench_root = self._get_openbench_root()
+            if base_output_dir.startswith("./"):
+                base_output_dir = base_output_dir[2:]
+            base_output_dir = os.path.join(openbench_root, base_output_dir)
 
         # Validate first
         errors = self.config_manager.validate(self.controller.config)
@@ -135,7 +196,6 @@ class PagePreview(BasePage):
             return False
 
         # Create output directory with project name
-        import os
         basename = self.controller.config.get("general", {}).get("basename", "config")
         output_dir = os.path.join(base_output_dir, basename)
         os.makedirs(output_dir, exist_ok=True)
