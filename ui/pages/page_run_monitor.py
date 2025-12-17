@@ -74,10 +74,6 @@ class PageRunMonitor(BasePage):
     def _on_progress(self, progress):
         """Handle progress update."""
         self.dashboard.set_progress(int(progress.progress))
-        self.dashboard.set_current_task(
-            progress.current_variable or "--",
-            progress.current_stage or "--"
-        )
 
         # Update task statuses based on progress
         if progress.current_variable and progress.current_stage:
