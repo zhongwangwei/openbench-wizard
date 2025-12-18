@@ -44,10 +44,10 @@ def get_openbench_root() -> str:
 
 def to_absolute_path(path: str, base_dir: Optional[str] = None) -> str:
     """
-    Convert a path to absolute path.
+    Convert a path to absolute path, with cross-platform support.
 
     Args:
-        path: Path to convert (can be relative or absolute)
+        path: Path to convert (can be relative or absolute, from any platform)
         base_dir: Base directory for relative paths (defaults to OpenBench root)
 
     Returns:
@@ -56,18 +56,24 @@ def to_absolute_path(path: str, base_dir: Optional[str] = None) -> str:
     if not path:
         return ""
 
+    # Get base directory first (needed for cross-platform conversion)
+    if base_dir is None:
+        base_dir = get_openbench_root()
+    else:
+        base_dir = os.path.normpath(base_dir)
+
+    # Try cross-platform conversion first (Linux path on Windows, or vice versa)
+    converted_path = convert_cross_platform_path(path, base_dir)
+    if converted_path != path:
+        # Cross-platform conversion was applied
+        return os.path.normpath(converted_path)
+
     # Normalize path separators for current platform
     path = normalize_path_separators(path)
 
     # If already absolute, just normalize and return
     if os.path.isabs(path):
         return os.path.normpath(path)
-
-    # Get base directory
-    if base_dir is None:
-        base_dir = get_openbench_root()
-    else:
-        base_dir = os.path.normpath(base_dir)
 
     # Handle relative paths starting with ./
     if path.startswith("./") or path.startswith(".\\"):
@@ -95,6 +101,128 @@ def normalize_path_separators(path: str) -> str:
         return path.replace('\\', '/')
     else:
         return path.replace('/', '\\')
+
+
+def convert_cross_platform_path(path: str, openbench_root: Optional[str] = None) -> str:
+    """
+    Convert a path from another platform to the current platform.
+
+    On Windows: converts Linux absolute paths (starting with /) to Windows paths
+    On Linux/Mac: converts Windows absolute paths (with drive letter) to Unix paths
+
+    The conversion works by:
+    1. Detecting if path is from another platform
+    2. Finding the relative portion within OpenBench structure
+    3. Rebuilding with current OpenBench root
+
+    Args:
+        path: Path that may be from another platform
+        openbench_root: Current OpenBench root directory
+
+    Returns:
+        Converted path for current platform, or original if conversion not possible
+    """
+    if not path:
+        return ""
+
+    if openbench_root is None:
+        openbench_root = get_openbench_root()
+
+    is_windows = sys.platform == 'win32'
+
+    # Detect Linux path on Windows (starts with / but no drive letter)
+    if is_windows and path.startswith('/') and not path.startswith('//'):
+        return _convert_linux_to_windows(path, openbench_root)
+
+    # Detect Windows path on Linux/Mac (has drive letter like C:\ or C:/)
+    if not is_windows and len(path) >= 2 and path[1] == ':':
+        return _convert_windows_to_linux(path, openbench_root)
+
+    return path
+
+
+def _convert_linux_to_windows(linux_path: str, openbench_root: str) -> str:
+    """Convert a Linux path to Windows path by finding relative portion."""
+    # Normalize separators in the linux path for searching
+    search_path = linux_path.replace('\\', '/')
+
+    # Common markers that indicate OpenBench structure
+    markers = [
+        '/OpenBench/',
+        '/openbench/',
+        '/nml/nml-yaml/',
+        '/nml/nml-Fortran/',
+        '/output/',
+        '/Mod_variables_definition/',
+    ]
+
+    for marker in markers:
+        lower_search = search_path.lower()
+        lower_marker = marker.lower()
+        if lower_marker in lower_search:
+            # Extract the relative path after the marker's parent
+            if lower_marker == '/openbench/':
+                # Get everything after OpenBench/
+                idx = lower_search.find('/openbench/')
+                relative = search_path[idx + len('/openbench/'):]
+            else:
+                # For other markers, find OpenBench root first
+                idx = lower_search.find('/openbench/')
+                if idx >= 0:
+                    relative = search_path[idx + len('/openbench/'):]
+                else:
+                    # Just use the marker position
+                    idx = lower_search.find(lower_marker)
+                    relative = search_path[idx + 1:]  # Skip leading /
+
+            # Build Windows path - normalize all separators to backslash
+            if relative:
+                relative = relative.replace('/', '\\')
+                result = os.path.join(openbench_root, relative)
+                return result.replace('/', '\\')
+
+    # If no marker found, just normalize separators
+    return linux_path.replace('/', '\\')
+
+
+def _convert_windows_to_linux(windows_path: str, openbench_root: str) -> str:
+    """Convert a Windows path to Linux path by finding relative portion."""
+    # Normalize separators
+    search_path = windows_path.replace('\\', '/')
+
+    # Common markers
+    markers = [
+        '/OpenBench/',
+        '/openbench/',
+        '/nml/nml-yaml/',
+        '/nml/nml-Fortran/',
+        '/output/',
+        '/Mod_variables_definition/',
+    ]
+
+    for marker in markers:
+        lower_search = search_path.lower()
+        lower_marker = marker.lower()
+        if lower_marker in lower_search:
+            if lower_marker == '/openbench/':
+                idx = lower_search.find('/openbench/')
+                relative = search_path[idx + len('/openbench/'):]
+            else:
+                idx = lower_search.find('/openbench/')
+                if idx >= 0:
+                    relative = search_path[idx + len('/openbench/'):]
+                else:
+                    idx = lower_search.find(lower_marker)
+                    relative = search_path[idx + 1:]
+
+            # Build Linux path - normalize all separators to forward slash
+            if relative:
+                relative = relative.replace('\\', '/')
+                result = os.path.join(openbench_root, relative)
+                return result.replace('\\', '/')
+
+    # If no marker found, just normalize separators
+    return windows_path.replace('\\', '/')
 
 
 def validate_path(path: str, path_type: str = "file", must_exist: bool = True) -> Tuple[bool, str]:
