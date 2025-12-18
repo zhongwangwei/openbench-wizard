@@ -51,51 +51,67 @@ class PageGeneral(BasePage):
         self.eyear_spin.setValue(2020)
         st_layout.addWidget(self.eyear_spin, 0, 3)
 
+        # Minimum year threshold
+        st_layout.addWidget(QLabel("Min Year Threshold:"), 1, 0)
+        self.min_year_spin = QDoubleSpinBox()
+        self.min_year_spin.setRange(0.0, 100.0)
+        self.min_year_spin.setValue(1.0)
+        self.min_year_spin.setSingleStep(0.5)
+        self.min_year_spin.setToolTip("Minimum number of years of valid data required")
+        st_layout.addWidget(self.min_year_spin, 1, 1)
+
         # Latitude range
-        st_layout.addWidget(QLabel("Latitude Range:"), 1, 0)
+        st_layout.addWidget(QLabel("Latitude Range:"), 2, 0)
         self.min_lat_spin = QDoubleSpinBox()
         self.min_lat_spin.setRange(-90.0, 90.0)
         self.min_lat_spin.setValue(-90.0)
-        st_layout.addWidget(self.min_lat_spin, 1, 1)
-        st_layout.addWidget(QLabel("to"), 1, 2)
+        st_layout.addWidget(self.min_lat_spin, 2, 1)
+        st_layout.addWidget(QLabel("to"), 2, 2)
         self.max_lat_spin = QDoubleSpinBox()
         self.max_lat_spin.setRange(-90.0, 90.0)
         self.max_lat_spin.setValue(90.0)
-        st_layout.addWidget(self.max_lat_spin, 1, 3)
+        st_layout.addWidget(self.max_lat_spin, 2, 3)
 
         # Longitude range
-        st_layout.addWidget(QLabel("Longitude Range:"), 2, 0)
+        st_layout.addWidget(QLabel("Longitude Range:"), 3, 0)
         self.min_lon_spin = QDoubleSpinBox()
         self.min_lon_spin.setRange(-180.0, 180.0)
         self.min_lon_spin.setValue(-180.0)
-        st_layout.addWidget(self.min_lon_spin, 2, 1)
-        st_layout.addWidget(QLabel("to"), 2, 2)
+        st_layout.addWidget(self.min_lon_spin, 3, 1)
+        st_layout.addWidget(QLabel("to"), 3, 2)
         self.max_lon_spin = QDoubleSpinBox()
         self.max_lon_spin.setRange(-180.0, 180.0)
         self.max_lon_spin.setValue(180.0)
-        st_layout.addWidget(self.max_lon_spin, 2, 3)
+        st_layout.addWidget(self.max_lon_spin, 3, 3)
 
         # Resolution
-        st_layout.addWidget(QLabel("Time Resolution:"), 3, 0)
+        st_layout.addWidget(QLabel("Time Resolution:"), 4, 0)
         self.tim_res_combo = QComboBox()
         self.tim_res_combo.addItems(["month", "day", "hour", "year"])
-        st_layout.addWidget(self.tim_res_combo, 3, 1)
+        st_layout.addWidget(self.tim_res_combo, 4, 1)
 
-        st_layout.addWidget(QLabel("Grid Resolution:"), 3, 2)
+        st_layout.addWidget(QLabel("Grid Resolution:"), 4, 2)
         self.grid_res_spin = QDoubleSpinBox()
         self.grid_res_spin.setRange(0.01, 10.0)
         self.grid_res_spin.setValue(2.0)
         self.grid_res_spin.setSingleStep(0.1)
         self.grid_res_spin.setSuffix("°")
-        st_layout.addWidget(self.grid_res_spin, 3, 3)
+        st_layout.addWidget(self.grid_res_spin, 4, 3)
 
         # Timezone
-        st_layout.addWidget(QLabel("Timezone:"), 4, 0)
+        st_layout.addWidget(QLabel("Timezone:"), 5, 0)
         self.timezone_spin = QDoubleSpinBox()
         self.timezone_spin.setRange(-12.0, 14.0)
         self.timezone_spin.setValue(0.0)
         self.timezone_spin.setSingleStep(0.5)
-        st_layout.addWidget(self.timezone_spin, 4, 1)
+        st_layout.addWidget(self.timezone_spin, 5, 1)
+
+        # Weight
+        st_layout.addWidget(QLabel("Weight:"), 5, 2)
+        self.weight_combo = QComboBox()
+        self.weight_combo.addItems(["None", "area", "mass"])
+        self.weight_combo.setToolTip("Weight method for spatial averaging (None, area-weighted, or mass-weighted)")
+        st_layout.addWidget(self.weight_combo, 5, 3)
 
         self.content_layout.addWidget(st_group)
 
@@ -130,6 +146,11 @@ class PageGeneral(BasePage):
         self.cb_only_drawing.stateChanged.connect(self._on_toggle_changed)
         toggle_layout.addWidget(self.cb_only_drawing, 1, 2)
 
+        self.cb_unified_mask = QCheckBox("Unified Mask")
+        self.cb_unified_mask.setChecked(True)
+        self.cb_unified_mask.stateChanged.connect(self._on_toggle_changed)
+        toggle_layout.addWidget(self.cb_unified_mask, 2, 0)
+
         self.content_layout.addWidget(toggle_group)
 
         # === Groupby Options ===
@@ -147,10 +168,6 @@ class PageGeneral(BasePage):
         self.cb_climate = QCheckBox("Climate Zone Groupby")
         self.cb_climate.setChecked(True)
         groupby_layout.addWidget(self.cb_climate)
-
-        self.cb_unified_mask = QCheckBox("Unified Mask")
-        self.cb_unified_mask.setChecked(True)
-        groupby_layout.addWidget(self.cb_unified_mask)
 
         groupby_layout.addStretch()
 
@@ -180,6 +197,7 @@ class PageGeneral(BasePage):
 
         self.syear_spin.setValue(general.get("syear", 2000))
         self.eyear_spin.setValue(general.get("eyear", 2020))
+        self.min_year_spin.setValue(general.get("min_year", 1.0))
         self.min_lat_spin.setValue(general.get("min_lat", -90.0))
         self.max_lat_spin.setValue(general.get("max_lat", 90.0))
         self.min_lon_spin.setValue(general.get("min_lon", -180.0))
@@ -207,6 +225,13 @@ class PageGeneral(BasePage):
 
         self.num_cores_spin.setValue(general.get("num_cores", 4))
 
+        weight = general.get("weight", "None")
+        if weight is None:
+            weight = "None"
+        idx = self.weight_combo.findText(str(weight))
+        if idx >= 0:
+            self.weight_combo.setCurrentIndex(idx)
+
     def save_to_config(self):
         """Save settings to controller config."""
         general = {
@@ -214,6 +239,7 @@ class PageGeneral(BasePage):
             "basedir": self.basedir_input.path(),
             "syear": self.syear_spin.value(),
             "eyear": self.eyear_spin.value(),
+            "min_year": self.min_year_spin.value(),
             "min_lat": self.min_lat_spin.value(),
             "max_lat": self.max_lat_spin.value(),
             "min_lon": self.min_lon_spin.value(),
@@ -232,6 +258,7 @@ class PageGeneral(BasePage):
             "Climate_zone_groupby": self.cb_climate.isChecked(),
             "unified_mask": self.cb_unified_mask.isChecked(),
             "num_cores": self.num_cores_spin.value(),
+            "weight": self.weight_combo.currentText() if self.weight_combo.currentText() != "None" else None,
         }
         self.controller.update_section("general", general)
 
