@@ -100,7 +100,9 @@ class EvaluationRunner(QThread):
                 text=True,
                 bufsize=1,
                 cwd=project_root,
-                env=env
+                env=env,
+                encoding='utf-8',
+                errors='replace'  # Replace unencodable characters instead of raising error
             )
 
             # Read output
