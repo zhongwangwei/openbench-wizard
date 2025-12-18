@@ -204,9 +204,14 @@ class DataSourceEditor(QDialog):
             return
 
         general = data.get("general", data)
+        openbench_root = get_openbench_root()
 
         if "root_dir" in general:
-            self.root_dir.set_path(general["root_dir"])
+            # Convert to absolute path when loading
+            root_dir = general["root_dir"]
+            if root_dir:
+                root_dir = to_absolute_path(root_dir, openbench_root)
+            self.root_dir.set_path(root_dir)
 
         if "data_type" in general:
             # Support both "stn" and "station" as station data type
@@ -238,7 +243,11 @@ class DataSourceEditor(QDialog):
         if "grid_res" in general:
             self.grid_res_input.setText(str(general["grid_res"]))
         if "fulllist" in general:
-            self.fulllist.set_path(general["fulllist"])
+            # Convert fulllist to absolute path when loading
+            fulllist = general["fulllist"]
+            if fulllist:
+                fulllist = to_absolute_path(fulllist, openbench_root)
+            self.fulllist.set_path(fulllist)
 
         # Variable mapping (might be at top level for ref data)
         var_data = data if "varname" in data else general
@@ -251,9 +260,12 @@ class DataSourceEditor(QDialog):
         if "suffix" in var_data:
             self.suffix_input.setText(str(var_data["suffix"]))
 
-        # Model definition for sim
+        # Model definition for sim - convert to absolute path
         if self.source_type == "sim" and "model_namelist" in general:
-            self.model_nml.set_path(general["model_namelist"])
+            model_nml = general["model_namelist"]
+            if model_nml:
+                model_nml = to_absolute_path(model_nml, openbench_root)
+            self.model_nml.set_path(model_nml)
 
     def get_data(self) -> Dict[str, Any]:
         """Get form data as dictionary with absolute paths."""
