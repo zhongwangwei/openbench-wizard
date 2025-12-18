@@ -93,6 +93,9 @@ class EvaluationRunner(QThread):
                         '_MEIPASS', '_MEIPASS2', 'TCL_LIBRARY', 'TK_LIBRARY']:
                 env.pop(var, None)
 
+            # Force UTF-8 encoding for Python subprocess (fixes Unicode errors on Windows)
+            env['PYTHONIOENCODING'] = 'utf-8'
+
             self._process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
