@@ -53,6 +53,17 @@ class WizardController(QObject):
         super().__init__(parent)
         self._config: Dict[str, Any] = self._default_config()
         self._current_page: str = "general"
+        self._project_root: str = ""
+
+    @property
+    def project_root(self) -> str:
+        """Get project root directory."""
+        return self._project_root
+
+    @project_root.setter
+    def project_root(self, value: str):
+        """Set project root directory."""
+        self._project_root = value
 
     def _default_config(self) -> Dict[str, Any]:
         """Return default configuration structure."""

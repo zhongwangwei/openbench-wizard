@@ -113,7 +113,7 @@ class ProgressDashboard(QWidget):
 
         layout.addLayout(top_row)
 
-        # === Log Output (expanded) ===
+        # === Log Output (expanded to fill available space) ===
         log_group = QGroupBox("Log Output")
         log_layout = QVBoxLayout(log_group)
         log_layout.setContentsMargins(5, 5, 5, 5)
@@ -121,9 +121,11 @@ class ProgressDashboard(QWidget):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumBlockCount(1000)
+        self.log_output.setMinimumHeight(200)  # Ensure minimum visible area
         log_layout.addWidget(self.log_output, 1)
 
-        layout.addWidget(log_group, 1)
+        # Give log_group higher stretch factor to maximize vertical space
+        layout.addWidget(log_group, 3)
 
         # === Control Buttons ===
         btn_layout = QHBoxLayout()

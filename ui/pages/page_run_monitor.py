@@ -24,6 +24,16 @@ class PageRunMonitor(BasePage):
     def __init__(self, controller, parent=None):
         self._runner = None
         super().__init__(controller, parent)
+        # Remove the trailing stretch added by BasePage so dashboard can expand
+        self._remove_trailing_stretch()
+
+    def _remove_trailing_stretch(self):
+        """Remove the trailing stretch from content_layout to allow dashboard to expand."""
+        count = self.content_layout.count()
+        if count > 0:
+            item = self.content_layout.itemAt(count - 1)
+            if item and item.spacerItem():
+                self.content_layout.takeAt(count - 1)
 
     def _setup_content(self):
         """Setup page content."""
@@ -32,7 +42,8 @@ class PageRunMonitor(BasePage):
         self.dashboard.stop_requested.connect(self._on_stop)
         self.dashboard.open_output_requested.connect(self._open_output)
 
-        self.content_layout.addWidget(self.dashboard)
+        # Add with stretch factor 1 to fill available space
+        self.content_layout.addWidget(self.dashboard, 1)
 
     def start_run(self, config_path: str):
         """Start evaluation run."""

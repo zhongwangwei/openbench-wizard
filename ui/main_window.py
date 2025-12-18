@@ -318,6 +318,10 @@ class MainWindow(QMainWindow):
             config_dir = os.path.dirname(os.path.abspath(file_path))
             base_dir = os.path.dirname(config_dir)  # Assume nml-yaml is one level down from base
 
+            # Determine project root (go up until we find 'openbench' or 'nml' directory)
+            project_root = self._find_project_root(config_dir)
+            self.controller.project_root = project_root
+
             # Start with default config
             new_config = self.controller._default_config()
 
@@ -472,6 +476,55 @@ class MainWindow(QMainWindow):
             if key.endswith("_sim_source"):
                 var_name = key.replace("_sim_source", "")
                 new_config["evaluation_items"][var_name] = True
+
+    def _find_project_root(self, start_dir: str) -> str:
+        """Find the OpenBench project root directory."""
+        current = start_dir
+        for _ in range(10):  # Max 10 levels up
+            # Check if this looks like OpenBench root
+            if os.path.exists(os.path.join(current, "openbench")) or \
+               os.path.exists(os.path.join(current, "nml")):
+                return current
+            parent = os.path.dirname(current)
+            if parent == current:  # Reached filesystem root
+                break
+            current = parent
+        return start_dir  # Fallback to start directory
+
+    def _convert_to_absolute_path(self, path: str, project_root: str) -> str:
+        """Convert a relative path to absolute path based on project root."""
+        if not path:
+            return path
+        if os.path.isabs(path):
+            return path
+        if path.startswith("./"):
+            path = path[2:]
+        return os.path.normpath(os.path.join(project_root, path))
+
+    def _validate_path(self, path: str, path_type: str = "file") -> bool:
+        """Validate if a path exists. Returns True if valid."""
+        if not path:
+            return True  # Empty paths are OK
+        if path_type == "file":
+            return os.path.isfile(path)
+        elif path_type == "directory":
+            return os.path.isdir(path)
+        return os.path.exists(path)
+
+    def _prompt_for_missing_path(self, description: str, path_type: str = "file") -> str:
+        """Prompt user to select a path when it's missing."""
+        msg = f"The following path was not found:\n\nPlease select the correct location."
+        QMessageBox.warning(self, "Path Not Found", msg)
+
+        if path_type == "file":
+            new_path, _ = QFileDialog.getOpenFileName(
+                self, f"Select {description}", "", "All Files (*)"
+            )
+        else:
+            new_path = QFileDialog.getExistingDirectory(
+                self, f"Select {description}"
+            )
+        return new_path or ""
 
     def _on_new_clicked(self):
         """Handle New Config button click."""

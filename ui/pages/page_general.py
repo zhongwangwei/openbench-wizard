@@ -190,10 +190,31 @@ class PageGeneral(BasePage):
 
     def load_from_config(self):
         """Load settings from controller config."""
+        import os
+        import sys
+
         general = self.controller.config.get("general", {})
 
         self.basename_input.setText(general.get("basename", ""))
-        self.basedir_input.set_path(general.get("basedir", "./output"))
+
+        # Get basedir and convert to absolute path
+        basedir = general.get("basedir", "")
+        if not basedir or basedir == "./output":
+            # Set default to project root's output folder or wizard directory
+            if self.controller.project_root:
+                basedir = os.path.join(self.controller.project_root, "output")
+            else:
+                # Use wizard's directory as default
+                if getattr(sys, 'frozen', False):
+                    wizard_dir = os.path.dirname(sys.executable)
+                else:
+                    wizard_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                basedir = os.path.join(wizard_dir, "output")
+        elif not os.path.isabs(basedir) and self.controller.project_root:
+            # Convert relative path to absolute
+            basedir = os.path.normpath(os.path.join(self.controller.project_root, basedir.lstrip("./")))
+
+        self.basedir_input.set_path(basedir)
 
         self.syear_spin.setValue(general.get("syear", 2000))
         self.eyear_spin.setValue(general.get("eyear", 2020))
