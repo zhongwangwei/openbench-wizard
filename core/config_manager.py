@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from core.path_utils import convert_paths_in_dict, get_openbench_root
+
 
 class ConfigManager:
     """Manages NML configuration loading, saving, and validation."""
@@ -148,17 +150,24 @@ class ConfigManager:
             indent=2
         )
 
-    def generate_ref_nml(self, config: Dict[str, Any]) -> str:
+    def generate_ref_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None) -> str:
         """
         Generate reference NML YAML content.
 
         Args:
             config: Full configuration dictionary
+            openbench_root: OpenBench root directory for generating absolute paths
 
         Returns:
             YAML string
         """
         ref_data = config.get("ref_data", {})
+
+        # Convert all paths to absolute
+        if openbench_root is None:
+            openbench_root = get_openbench_root()
+        ref_data = convert_paths_in_dict(ref_data, openbench_root)
+
         return yaml.dump(
             ref_data,
             default_flow_style=False,
@@ -167,17 +176,24 @@ class ConfigManager:
             indent=2
         )
 
-    def generate_sim_nml(self, config: Dict[str, Any]) -> str:
+    def generate_sim_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None) -> str:
         """
         Generate simulation NML YAML content.
 
         Args:
             config: Full configuration dictionary
+            openbench_root: OpenBench root directory for generating absolute paths
 
         Returns:
             YAML string
         """
         sim_data = config.get("sim_data", {})
+
+        # Convert all paths to absolute
+        if openbench_root is None:
+            openbench_root = get_openbench_root()
+        sim_data = convert_paths_in_dict(sim_data, openbench_root)
+
         return yaml.dump(
             sim_data,
             default_flow_style=False,
@@ -239,7 +255,8 @@ class ConfigManager:
         self,
         config: Dict[str, Any],
         output_dir: str,
-        basename: Optional[str] = None
+        basename: Optional[str] = None,
+        openbench_root: Optional[str] = None
     ) -> Dict[str, str]:
         """
         Export all NML files to directory.
@@ -248,6 +265,7 @@ class ConfigManager:
             config: Configuration dictionary
             output_dir: Output directory path
             basename: Base name for files (defaults to config basename)
+            openbench_root: OpenBench root directory for path conversion
 
         Returns:
             Dictionary of {file_type: file_path}
@@ -255,27 +273,30 @@ class ConfigManager:
         if basename is None:
             basename = config.get("general", {}).get("basename", "config")
 
+        if openbench_root is None:
+            openbench_root = get_openbench_root()
+
         os.makedirs(output_dir, exist_ok=True)
 
         files = {}
 
         # Main NML
         main_path = os.path.join(output_dir, f"main-{basename}.yaml")
-        main_content = self.generate_main_nml(config)
+        main_content = self.generate_main_nml(config, openbench_root)
         with open(main_path, 'w', encoding='utf-8') as f:
             f.write(main_content)
         files["main"] = main_path
 
         # Ref NML
         ref_path = os.path.join(output_dir, f"ref-{basename}.yaml")
-        ref_content = self.generate_ref_nml(config)
+        ref_content = self.generate_ref_nml(config, openbench_root)
         with open(ref_path, 'w', encoding='utf-8') as f:
             f.write(ref_content)
         files["ref"] = ref_path
 
         # Sim NML
         sim_path = os.path.join(output_dir, f"sim-{basename}.yaml")
-        sim_content = self.generate_sim_nml(config)
+        sim_content = self.generate_sim_nml(config, openbench_root)
         with open(sim_path, 'w', encoding='utf-8') as f:
             f.write(sim_content)
         files["sim"] = sim_path

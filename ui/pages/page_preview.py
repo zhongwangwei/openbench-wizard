@@ -92,10 +92,10 @@ class PagePreview(BasePage):
         main_yaml = self.config_manager.generate_main_nml(config, openbench_root)
         self.main_preview.set_content(main_yaml)
 
-        ref_yaml = self.config_manager.generate_ref_nml(config)
+        ref_yaml = self.config_manager.generate_ref_nml(config, openbench_root)
         self.ref_preview.set_content(ref_yaml)
 
-        sim_yaml = self.config_manager.generate_sim_nml(config)
+        sim_yaml = self.config_manager.generate_sim_nml(config, openbench_root)
         self.sim_preview.set_content(sim_yaml)
 
     def _validate_config(self):

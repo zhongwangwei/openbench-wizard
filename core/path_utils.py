@@ -133,7 +133,8 @@ def validate_path(path: str, path_type: str = "file", must_exist: bool = True) -
     return True, ""
 
 
-def convert_paths_in_dict(data: dict, base_dir: Optional[str] = None, path_keys: Optional[list] = None) -> dict:
+def convert_paths_in_dict(data: dict, base_dir: Optional[str] = None, path_keys: Optional[list] = None,
+                          all_values_are_paths_keys: Optional[list] = None) -> dict:
     """
     Recursively convert all path values in a dictionary to absolute paths.
 
@@ -141,6 +142,8 @@ def convert_paths_in_dict(data: dict, base_dir: Optional[str] = None, path_keys:
         data: Dictionary containing paths
         base_dir: Base directory for relative paths
         path_keys: List of keys that contain paths (if None, uses default list)
+        all_values_are_paths_keys: List of keys whose child dict has ALL values as paths
+                                   (e.g., 'def_nml' where all values are path strings)
 
     Returns:
         Dictionary with converted paths
@@ -152,16 +155,25 @@ def convert_paths_in_dict(data: dict, base_dir: Optional[str] = None, path_keys:
             "def_nml_path", "data_path", "file_path", "output_dir"
         ]
 
+    if all_values_are_paths_keys is None:
+        all_values_are_paths_keys = ["def_nml"]
+
     if not isinstance(data, dict):
         return data
 
     result = {}
     for key, value in data.items():
-        if isinstance(value, dict):
-            result[key] = convert_paths_in_dict(value, base_dir, path_keys)
+        # Special handling for sections where ALL values are paths (like def_nml)
+        if key in all_values_are_paths_keys and isinstance(value, dict):
+            result[key] = {
+                k: to_absolute_path(v, base_dir) if isinstance(v, str) and v else v
+                for k, v in value.items()
+            }
+        elif isinstance(value, dict):
+            result[key] = convert_paths_in_dict(value, base_dir, path_keys, all_values_are_paths_keys)
         elif isinstance(value, list):
             result[key] = [
-                convert_paths_in_dict(item, base_dir, path_keys) if isinstance(item, dict) else item
+                convert_paths_in_dict(item, base_dir, path_keys, all_values_are_paths_keys) if isinstance(item, dict) else item
                 for item in value
             ]
         elif isinstance(value, str) and key in path_keys and value:
