@@ -93,7 +93,7 @@ class ConfigManager:
             "statistics": general.get("statistics", False),
             "debug_mode": general.get("debug_mode", False),
             "only_drawing": general.get("only_drawing", False),
-            "weight": general.get("weight", None),
+            "weight": general.get("weight", "none"),
             "IGBP_groupby": general.get("IGBP_groupby", True),
             "PFT_groupby": general.get("PFT_groupby", True),
             "Climate_zone_groupby": general.get("Climate_zone_groupby", True),

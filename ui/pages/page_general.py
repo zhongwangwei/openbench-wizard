@@ -225,10 +225,13 @@ class PageGeneral(BasePage):
 
         self.num_cores_spin.setValue(general.get("num_cores", 4))
 
-        weight = general.get("weight", "None")
+        weight = general.get("weight", "none")
         if weight is None:
-            weight = "None"
-        idx = self.weight_combo.findText(str(weight))
+            weight = "none"
+        # Map lowercase to display text
+        weight_map = {"none": "None", "area": "area", "mass": "mass"}
+        display_weight = weight_map.get(str(weight).lower(), "None")
+        idx = self.weight_combo.findText(display_weight)
         if idx >= 0:
             self.weight_combo.setCurrentIndex(idx)
 
@@ -258,7 +261,7 @@ class PageGeneral(BasePage):
             "Climate_zone_groupby": self.cb_climate.isChecked(),
             "unified_mask": self.cb_unified_mask.isChecked(),
             "num_cores": self.num_cores_spin.value(),
-            "weight": self.weight_combo.currentText() if self.weight_combo.currentText() != "None" else None,
+            "weight": self.weight_combo.currentText().lower(),
         }
         self.controller.update_section("general", general)
 
