@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 
 from ui.pages.base_page import BasePage
 from ui.widgets import PathSelector
+from core.path_utils import to_absolute_path, get_openbench_root
 
 
 class PageGeneral(BasePage):
@@ -319,38 +320,7 @@ class PageGeneral(BasePage):
 
     def _get_openbench_root(self) -> str:
         """Get the OpenBench root directory."""
-        import os
-        import sys
-
         # Use controller's project_root if available
         if self.controller.project_root:
             return self.controller.project_root
-
-        # Try to load saved path
-        try:
-            home_dir = os.path.expanduser("~")
-            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    path = f.read().strip()
-                    if os.path.exists(path):
-                        return path
-        except Exception:
-            pass
-
-        # Search common locations
-        possible_roots = [
-            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "OpenBench"),
-        ]
-
-        for root in possible_roots:
-            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
-                return root
-
-        # Fallback to wizard's directory
-        if getattr(sys, 'frozen', False):
-            return os.path.dirname(sys.executable)
-        else:
-            return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return get_openbench_root()

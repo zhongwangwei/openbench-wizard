@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 
 from ui.pages.base_page import BasePage
 from ui.widgets import DataSourceEditor
+from core.path_utils import to_absolute_path, get_openbench_root, convert_paths_in_dict
 
 
 class PageRefData(BasePage):
@@ -217,66 +218,29 @@ class PageRefData(BasePage):
         if not def_nml_path:
             return ""
 
-        # If already absolute, return as-is
-        if os.path.isabs(def_nml_path):
-            if os.path.exists(def_nml_path):
-                return def_nml_path
-            # Try converting .nml to .yaml
-            yaml_path = def_nml_path.replace("nml-Fortran", "nml-yaml").replace(".nml", ".yaml")
-            return yaml_path if os.path.exists(yaml_path) else def_nml_path
-
-        # Normalize the path
-        if def_nml_path.startswith("./"):
-            base_path = def_nml_path[2:]
-        else:
-            base_path = def_nml_path
-
-        # Convert to YAML path if it's a Fortran .nml path
-        if "nml-Fortran" in base_path or base_path.endswith(".nml"):
-            base_path = base_path.replace("nml-Fortran", "nml-yaml").replace(".nml", ".yaml")
-
         # Get OpenBench root
         openbench_root = self._get_openbench_root()
 
-        # Build full path using OpenBench root
-        full_path = os.path.join(openbench_root, base_path)
+        # Convert to absolute path
+        full_path = to_absolute_path(def_nml_path, openbench_root)
 
-        return full_path if os.path.exists(full_path) else ""
+        # If already absolute and exists, return it
+        if os.path.exists(full_path):
+            return full_path
+
+        # Try converting .nml to .yaml
+        yaml_path = full_path.replace("nml-Fortran", "nml-yaml").replace(".nml", ".yaml")
+        if os.path.exists(yaml_path):
+            return yaml_path
+
+        return full_path  # Return even if doesn't exist, let validation catch it
 
     def _get_openbench_root(self) -> str:
         """Get the OpenBench root directory."""
-        import os
-        import sys
-
         # Use controller's project_root if available
         if self.controller.project_root:
             return self.controller.project_root
-
-        # Try to load saved path
-        try:
-            home_dir = os.path.expanduser("~")
-            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    path = f.read().strip()
-                    if os.path.exists(path):
-                        return path
-        except Exception:
-            pass
-
-        # Search common locations
-        possible_roots = [
-            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "OpenBench"),
-        ]
-
-        for root in possible_roots:
-            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
-                return root
-
-        # Fallback to current working directory
-        return os.getcwd()
+        return get_openbench_root()
 
     def save_to_config(self):
         """Save to config."""

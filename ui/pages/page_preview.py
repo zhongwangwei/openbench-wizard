@@ -12,6 +12,7 @@ from PySide6.QtCore import Signal
 from ui.pages.base_page import BasePage
 from ui.widgets import PathSelector, YamlPreview
 from core.config_manager import ConfigManager
+from core.path_utils import get_openbench_root, to_absolute_path
 
 
 class PagePreview(BasePage):
@@ -139,35 +140,10 @@ class PagePreview(BasePage):
 
     def _get_openbench_root(self) -> str:
         """Get the OpenBench root directory."""
-        import os
-        import sys
-
-        # Try to load saved path first
-        try:
-            home_dir = os.path.expanduser("~")
-            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    path = f.read().strip()
-                    if os.path.exists(path):
-                        return path
-        except Exception:
-            pass
-
-        # Search common locations
-        possible_roots = [
-            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "OpenBench"),
-            os.path.dirname(os.path.dirname(sys.executable)) if sys.executable else None,
-        ]
-
-        for root in possible_roots:
-            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
-                return root
-
-        # Fallback to current directory
-        return os.getcwd()
+        # Use controller's project_root if available
+        if self.controller.project_root:
+            return self.controller.project_root
+        return get_openbench_root()
 
     def _get_default_export_path(self) -> str:
         """Get the default export path (OpenBench/nml/nml-yaml/project_name)."""

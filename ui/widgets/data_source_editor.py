@@ -9,11 +9,12 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QPushButton, QGroupBox, QRadioButton, QButtonGroup,
-    QDialogButtonBox, QLabel
+    QDialogButtonBox, QLabel, QMessageBox
 )
 from PySide6.QtCore import Qt
 
 from ui.widgets.path_selector import PathSelector
+from core.path_utils import to_absolute_path, validate_path, get_openbench_root
 
 
 class DataSourceEditor(QDialog):
@@ -255,12 +256,18 @@ class DataSourceEditor(QDialog):
             self.model_nml.set_path(general["model_namelist"])
 
     def get_data(self) -> Dict[str, Any]:
-        """Get form data as dictionary."""
+        """Get form data as dictionary with absolute paths."""
         is_station = self.radio_station.isChecked()
+        openbench_root = get_openbench_root()
+
+        # Convert root_dir to absolute path
+        root_dir = self.root_dir.path()
+        if root_dir:
+            root_dir = to_absolute_path(root_dir, openbench_root)
 
         # Build general section
         general = {
-            "root_dir": self.root_dir.path(),
+            "root_dir": root_dir,
             "data_type": "stn" if is_station else "grid",
             "data_groupby": self.groupby_combo.currentText(),
             "tim_res": self.tim_res_combo.currentText(),
@@ -283,11 +290,11 @@ class DataSourceEditor(QDialog):
         else:
             general["grid_res"] = ""
 
-        # Add fulllist for station data (optional)
+        # Add fulllist for station data (optional) - convert to absolute
         if is_station:
             fulllist_path = self.fulllist.path()
             if fulllist_path:
-                general["fulllist"] = fulllist_path
+                general["fulllist"] = to_absolute_path(fulllist_path, openbench_root)
 
         data = {"general": general}
 
@@ -301,11 +308,56 @@ class DataSourceEditor(QDialog):
         if self.suffix_input.text():
             data["suffix"] = self.suffix_input.text()
 
-        # Add model definition for sim
+        # Add model definition for sim - convert to absolute
         if self.source_type == "sim":
-            data["general"]["model_namelist"] = self.model_nml.path()
+            model_path = self.model_nml.path()
+            if model_path:
+                model_path = to_absolute_path(model_path, openbench_root)
+            data["general"]["model_namelist"] = model_path
 
         return data
+
+    def accept(self):
+        """Override accept to validate paths before closing."""
+        # Validate root_dir
+        root_dir = self.root_dir.path()
+        if root_dir:
+            root_dir = to_absolute_path(root_dir, get_openbench_root())
+            is_valid, error = validate_path(root_dir, "directory")
+            if not is_valid:
+                QMessageBox.warning(
+                    self, "Invalid Path",
+                    f"Root directory path is invalid:\n{root_dir}\n\n{error}"
+                )
+                return
+
+        # Validate fulllist if station data
+        if self.radio_station.isChecked():
+            fulllist_path = self.fulllist.path()
+            if fulllist_path:
+                fulllist_path = to_absolute_path(fulllist_path, get_openbench_root())
+                is_valid, error = validate_path(fulllist_path, "file")
+                if not is_valid:
+                    QMessageBox.warning(
+                        self, "Invalid Path",
+                        f"Station list file path is invalid:\n{fulllist_path}\n\n{error}"
+                    )
+                    return
+
+        # Validate model_namelist for sim data
+        if self.source_type == "sim":
+            model_path = self.model_nml.path()
+            if model_path:
+                model_path = to_absolute_path(model_path, get_openbench_root())
+                is_valid, error = validate_path(model_path, "file")
+                if not is_valid:
+                    QMessageBox.warning(
+                        self, "Invalid Path",
+                        f"Model definition file path is invalid:\n{model_path}\n\n{error}"
+                    )
+                    return
+
+        super().accept()
 
     def get_source_name(self) -> str:
         """Get source name."""

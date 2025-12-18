@@ -15,6 +15,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize
 
 from ui.wizard_controller import WizardController
+from core.path_utils import (
+    get_openbench_root, to_absolute_path, convert_paths_in_dict,
+    validate_paths_in_dict, normalize_path_separators
+)
 from ui.pages import (
     PageGeneral, PageEvaluation, PageMetrics, PageScores,
     PageComparisons, PageStatistics, PageRefData, PageSimData,
@@ -34,42 +38,12 @@ class MainWindow(QMainWindow):
         self.controller = WizardController(self)
 
         # Set project_root on startup
-        self.controller.project_root = self._find_openbench_root_init()
+        self.controller.project_root = get_openbench_root()
 
         # Setup UI
         self._setup_ui()
         self._connect_signals()
         self._update_navigation()
-
-    def _find_openbench_root_init(self) -> str:
-        """Find the OpenBench root directory on initialization."""
-        import sys
-
-        # Try to load saved path first
-        try:
-            home_dir = os.path.expanduser("~")
-            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    path = f.read().strip()
-                    if os.path.exists(path):
-                        return path
-        except Exception:
-            pass
-
-        # Search common locations
-        possible_roots = [
-            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "OpenBench"),
-        ]
-
-        for root in possible_roots:
-            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
-                return root
-
-        # Fallback to current working directory
-        return os.getcwd()
 
     def _setup_ui(self):
         """Initialize the user interface."""
@@ -416,10 +390,14 @@ class MainWindow(QMainWindow):
                           config_dir: str, base_dir: str):
         """Load a main config file and its referenced ref/sim configs."""
         general = loaded_config.get("general", {})
+        project_root = self.controller.project_root
 
-        # Copy general settings
+        # Copy general settings and convert paths to absolute
         for key, value in general.items():
             if key not in ("reference_nml", "simulation_nml", "statistics_nml", "figure_nml"):
+                # Convert path fields to absolute
+                if key in ("basedir",) and value:
+                    value = to_absolute_path(value, project_root)
                 new_config["general"][key] = value
 
         # Copy other sections
@@ -435,6 +413,8 @@ class MainWindow(QMainWindow):
                 try:
                     with open(ref_full_path, 'r', encoding='utf-8') as f:
                         ref_config = yaml.safe_load(f) or {}
+                    # Convert all paths in ref_config to absolute
+                    ref_config = convert_paths_in_dict(ref_config, project_root)
                     new_config["ref_data"] = ref_config
                 except Exception as e:
                     print(f"Warning: Failed to load reference NML: {e}")
@@ -447,9 +427,14 @@ class MainWindow(QMainWindow):
                 try:
                     with open(sim_full_path, 'r', encoding='utf-8') as f:
                         sim_config = yaml.safe_load(f) or {}
+                    # Convert all paths in sim_config to absolute
+                    sim_config = convert_paths_in_dict(sim_config, project_root)
                     new_config["sim_data"] = sim_config
                 except Exception as e:
                     print(f"Warning: Failed to load simulation NML: {e}")
+
+        # Validate all paths and warn user about missing ones
+        self._validate_loaded_paths(new_config)
 
     def _resolve_path(self, path: str, config_dir: str, base_dir: str) -> str:
         """Resolve a path that might be relative to different base directories."""
@@ -559,6 +544,26 @@ class MainWindow(QMainWindow):
             )
         return new_path or ""
 
+    def _validate_loaded_paths(self, config: dict):
+        """Validate loaded paths and show warnings for missing ones."""
+        errors = validate_paths_in_dict(config)
+
+        if errors:
+            # Build error message
+            error_lines = []
+            for key, path, error in errors[:10]:  # Show max 10 errors
+                error_lines.append(f"  {key}: {path}")
+
+            if len(errors) > 10:
+                error_lines.append(f"  ... and {len(errors) - 10} more")
+
+            msg = (
+                "Some paths in the configuration could not be found:\n\n"
+                + "\n".join(error_lines)
+                + "\n\nPlease update the paths in the respective data pages."
+            )
+            QMessageBox.warning(self, "Path Validation Warning", msg)
+
     def _on_new_clicked(self):
         """Handle New Config button click."""
         reply = QMessageBox.question(
@@ -571,38 +576,4 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             self.controller.reset()
             # Set project_root for new configs
-            openbench_root = self._find_openbench_root()
-            self.controller.project_root = openbench_root
-
-    def _find_openbench_root(self) -> str:
-        """Find the OpenBench root directory."""
-        import sys
-
-        # Try to load saved path first
-        try:
-            home_dir = os.path.expanduser("~")
-            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    path = f.read().strip()
-                    if os.path.exists(path):
-                        return path
-        except Exception:
-            pass
-
-        # Search common locations
-        possible_roots = [
-            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
-            os.path.join(os.path.expanduser("~"), "OpenBench"),
-        ]
-
-        for root in possible_roots:
-            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
-                return root
-
-        # Fallback to wizard's directory
-        if getattr(sys, 'frozen', False):
-            return os.path.dirname(sys.executable)
-        else:
-            return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.controller.project_root = get_openbench_root()
