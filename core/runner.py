@@ -162,12 +162,20 @@ class EvaluationRunner(QThread):
         """Find a Python interpreter to run OpenBench."""
         import shutil
 
+        is_windows = sys.platform == 'win32'
+
         # Check if sys.executable is a real Python interpreter (not bundled app)
         if sys.executable and 'python' in sys.executable.lower():
-            return sys.executable
+            # Verify it's not the bundled executable
+            if os.path.basename(sys.executable).lower() not in ('openbench_wizard.exe', 'openbench_wizard'):
+                return sys.executable
 
-        # Common Python executable names
-        python_names = ['python3', 'python', 'python3.11', 'python3.10', 'python3.12']
+        # Common Python executable names - order matters!
+        # On Windows, 'python' is the standard command; 'python3' often doesn't exist
+        if is_windows:
+            python_names = ['python', 'python3', 'py']
+        else:
+            python_names = ['python3', 'python', 'python3.11', 'python3.10', 'python3.12']
 
         # Check PATH
         for name in python_names:
@@ -176,24 +184,45 @@ class EvaluationRunner(QThread):
                 self.log_message.emit(f"Using Python: {path}")
                 return path
 
-        # Common locations
-        common_paths = [
-            '/usr/bin/python3',
-            '/usr/local/bin/python3',
-            '/opt/homebrew/bin/python3',
-            os.path.expanduser('~/miniforge3/bin/python'),
-            os.path.expanduser('~/miniconda3/bin/python'),
-            os.path.expanduser('~/anaconda3/bin/python'),
-        ]
+        # Common locations based on platform
+        if is_windows:
+            # Windows common Python locations
+            user_home = os.path.expanduser('~')
+            common_paths = [
+                # Standard Python installation
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Python', 'Python311', 'python.exe'),
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Python', 'Python310', 'python.exe'),
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Python', 'Python312', 'python.exe'),
+                # Anaconda/Miniconda
+                os.path.join(user_home, 'anaconda3', 'python.exe'),
+                os.path.join(user_home, 'miniconda3', 'python.exe'),
+                os.path.join(user_home, 'Anaconda3', 'python.exe'),
+                os.path.join(user_home, 'Miniconda3', 'python.exe'),
+                # Program Files
+                r'C:\Python311\python.exe',
+                r'C:\Python310\python.exe',
+                r'C:\Python312\python.exe',
+            ]
+        else:
+            # Unix/Mac common Python locations
+            common_paths = [
+                '/usr/bin/python3',
+                '/usr/local/bin/python3',
+                '/opt/homebrew/bin/python3',
+                os.path.expanduser('~/miniforge3/bin/python'),
+                os.path.expanduser('~/miniconda3/bin/python'),
+                os.path.expanduser('~/anaconda3/bin/python'),
+            ]
 
         for path in common_paths:
-            if os.path.exists(path):
+            if path and os.path.exists(path):
                 self.log_message.emit(f"Using Python: {path}")
                 return path
 
-        # Fallback - hope python3 works
-        self.log_message.emit("Warning: Could not find Python interpreter, trying 'python3'")
-        return 'python3'
+        # Fallback based on platform
+        fallback = 'python' if is_windows else 'python3'
+        self.log_message.emit(f"Warning: Could not find Python interpreter, trying '{fallback}'")
+        return fallback
 
     def _find_openbench_script(self) -> Optional[str]:
         """Find the OpenBench main script."""
