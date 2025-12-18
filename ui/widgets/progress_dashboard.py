@@ -34,7 +34,6 @@ class TaskInfo:
 class ProgressDashboard(QWidget):
     """Dashboard widget for displaying evaluation progress."""
 
-    pause_requested = Signal()
     stop_requested = Signal()
     open_output_requested = Signal()
 
@@ -129,11 +128,6 @@ class ProgressDashboard(QWidget):
 
         # === Control Buttons ===
         btn_layout = QHBoxLayout()
-
-        self.btn_pause = QPushButton("Pause")
-        self.btn_pause.setProperty("secondary", True)
-        self.btn_pause.clicked.connect(self.pause_requested.emit)
-        btn_layout.addWidget(self.btn_pause)
 
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.setStyleSheet("""

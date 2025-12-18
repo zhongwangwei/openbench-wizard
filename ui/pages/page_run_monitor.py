@@ -38,7 +38,6 @@ class PageRunMonitor(BasePage):
     def _setup_content(self):
         """Setup page content."""
         self.dashboard = ProgressDashboard()
-        self.dashboard.pause_requested.connect(self._on_pause)
         self.dashboard.stop_requested.connect(self._on_stop)
         self.dashboard.open_output_requested.connect(self._open_output)
 
@@ -157,12 +156,6 @@ class PageRunMonitor(BasePage):
                 f.write(path)
         except Exception:
             pass
-
-    def _on_pause(self):
-        """Handle pause request."""
-        if self._runner:
-            self._runner.pause()
-            self.dashboard.btn_pause.setText("Resume")
 
     def _on_stop(self):
         """Handle stop request."""

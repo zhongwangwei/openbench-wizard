@@ -109,7 +109,8 @@ class EvaluationRunner(QThread):
             progress = 0
             while True:
                 if self._stop_requested:
-                    self._process.terminate()
+                    # Kill the process and all children
+                    self._kill_process_tree()
                     self._emit_progress(
                         RunnerStatus.STOPPED, progress,
                         "Stopped", "", "", "Evaluation stopped by user"
@@ -324,11 +325,41 @@ class EvaluationRunner(QThread):
             message=message
         ))
 
+    def _kill_process_tree(self):
+        """Kill the process and all its children."""
+        if not self._process:
+            return
+
+        try:
+            # Try to kill child processes first (more thorough termination)
+            import psutil
+            try:
+                parent = psutil.Process(self._process.pid)
+                children = parent.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+            except psutil.NoSuchProcess:
+                pass
+        except ImportError:
+            pass
+
+        # Kill the main process (SIGKILL on Unix, TerminateProcess on Windows)
+        try:
+            self._process.kill()
+        except Exception:
+            # Fallback to terminate if kill fails
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
     def stop(self):
         """Request stop."""
         self._stop_requested = True
-        if self._process:
-            self._process.terminate()
+        self._kill_process_tree()
 
     def pause(self):
         """Request pause (not fully implemented - requires process support)."""
