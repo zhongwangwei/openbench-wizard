@@ -33,10 +33,43 @@ class MainWindow(QMainWindow):
         # Initialize controller
         self.controller = WizardController(self)
 
+        # Set project_root on startup
+        self.controller.project_root = self._find_openbench_root_init()
+
         # Setup UI
         self._setup_ui()
         self._connect_signals()
         self._update_navigation()
+
+    def _find_openbench_root_init(self) -> str:
+        """Find the OpenBench root directory on initialization."""
+        import sys
+
+        # Try to load saved path first
+        try:
+            home_dir = os.path.expanduser("~")
+            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    path = f.read().strip()
+                    if os.path.exists(path):
+                        return path
+        except Exception:
+            pass
+
+        # Search common locations
+        possible_roots = [
+            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "OpenBench"),
+        ]
+
+        for root in possible_roots:
+            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
+                return root
+
+        # Fallback to current working directory
+        return os.getcwd()
 
     def _setup_ui(self):
         """Initialize the user interface."""
@@ -537,3 +570,39 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.Yes:
             self.controller.reset()
+            # Set project_root for new configs
+            openbench_root = self._find_openbench_root()
+            self.controller.project_root = openbench_root
+
+    def _find_openbench_root(self) -> str:
+        """Find the OpenBench root directory."""
+        import sys
+
+        # Try to load saved path first
+        try:
+            home_dir = os.path.expanduser("~")
+            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    path = f.read().strip()
+                    if os.path.exists(path):
+                        return path
+        except Exception:
+            pass
+
+        # Search common locations
+        possible_roots = [
+            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "OpenBench"),
+        ]
+
+        for root in possible_roots:
+            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
+                return root
+
+        # Fallback to wizard's directory
+        if getattr(sys, 'frozen', False):
+            return os.path.dirname(sys.executable)
+        else:
+            return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

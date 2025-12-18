@@ -194,25 +194,26 @@ class PageGeneral(BasePage):
         import sys
 
         general = self.controller.config.get("general", {})
+        basename = general.get("basename", "")
 
-        self.basename_input.setText(general.get("basename", ""))
+        self.basename_input.setText(basename)
 
-        # Get basedir and convert to absolute path
+        # Get basedir and convert to absolute path with project name
         basedir = general.get("basedir", "")
-        if not basedir or basedir == "./output":
-            # Set default to project root's output folder or wizard directory
-            if self.controller.project_root:
-                basedir = os.path.join(self.controller.project_root, "output")
-            else:
-                # Use wizard's directory as default
-                if getattr(sys, 'frozen', False):
-                    wizard_dir = os.path.dirname(sys.executable)
-                else:
-                    wizard_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                basedir = os.path.join(wizard_dir, "output")
-        elif not os.path.isabs(basedir) and self.controller.project_root:
+
+        # Find OpenBench root directory
+        openbench_root = self._get_openbench_root()
+
+        if not basedir or basedir.startswith("./output") or basedir == "./output":
+            # Set default to OpenBench/output/project_name
+            basedir = os.path.join(openbench_root, "output")
+            if basename:
+                basedir = os.path.join(basedir, basename)
+        elif not os.path.isabs(basedir):
             # Convert relative path to absolute
-            basedir = os.path.normpath(os.path.join(self.controller.project_root, basedir.lstrip("./")))
+            if basedir.startswith("./"):
+                basedir = basedir[2:]
+            basedir = os.path.normpath(os.path.join(openbench_root, basedir))
 
         self.basedir_input.set_path(basedir)
 
@@ -315,3 +316,41 @@ class PageGeneral(BasePage):
 
         self.save_to_config()
         return True
+
+    def _get_openbench_root(self) -> str:
+        """Get the OpenBench root directory."""
+        import os
+        import sys
+
+        # Use controller's project_root if available
+        if self.controller.project_root:
+            return self.controller.project_root
+
+        # Try to load saved path
+        try:
+            home_dir = os.path.expanduser("~")
+            config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    path = f.read().strip()
+                    if os.path.exists(path):
+                        return path
+        except Exception:
+            pass
+
+        # Search common locations
+        possible_roots = [
+            os.path.join(os.path.expanduser("~"), "Desktop", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "Documents", "OpenBench"),
+            os.path.join(os.path.expanduser("~"), "OpenBench"),
+        ]
+
+        for root in possible_roots:
+            if root and os.path.exists(os.path.join(root, "openbench", "openbench.py")):
+                return root
+
+        # Fallback to wizard's directory
+        if getattr(sys, 'frozen', False):
+            return os.path.dirname(sys.executable)
+        else:
+            return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

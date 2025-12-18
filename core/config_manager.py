@@ -56,12 +56,13 @@ class ConfigManager:
                 indent=2
             )
 
-    def generate_main_nml(self, config: Dict[str, Any]) -> str:
+    def generate_main_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None) -> str:
         """
         Generate main NML YAML content.
 
         Args:
             config: Full configuration dictionary
+            openbench_root: OpenBench root directory for generating absolute paths
 
         Returns:
             YAML string
@@ -70,9 +71,32 @@ class ConfigManager:
 
         # General section
         general = config.get("general", {})
+        basename = general.get("basename", "config")
+
+        # Generate absolute paths if openbench_root is provided
+        if openbench_root:
+            nml_yaml_dir = os.path.join(openbench_root, "nml", "nml-yaml", basename)
+            ref_nml_path = os.path.join(nml_yaml_dir, f"ref-{basename}.yaml")
+            sim_nml_path = os.path.join(nml_yaml_dir, f"sim-{basename}.yaml")
+            stats_nml_path = os.path.join(openbench_root, "nml", "nml-yaml", "stats.yaml")
+            figure_nml_path = os.path.join(openbench_root, "nml", "nml-yaml", "figlib.yaml")
+            output_dir = os.path.join(openbench_root, "output", basename)
+        else:
+            # Fallback to relative paths if no root provided
+            ref_nml_path = f"./nml/nml-yaml/{basename}/ref-{basename}.yaml"
+            sim_nml_path = f"./nml/nml-yaml/{basename}/sim-{basename}.yaml"
+            stats_nml_path = "./nml/nml-yaml/stats.yaml"
+            figure_nml_path = "./nml/nml-yaml/figlib.yaml"
+            output_dir = general.get("basedir", "./output")
+
+        # Use basedir from config if it's already absolute, otherwise use generated path
+        basedir = general.get("basedir", "")
+        if basedir and os.path.isabs(basedir):
+            output_dir = basedir
+
         main_config["general"] = {
-            "basename": general.get("basename", ""),
-            "basedir": general.get("basedir", "./output"),
+            "basename": basename,
+            "basedir": output_dir,
             "compare_tim_res": general.get("compare_tim_res", "month"),
             "compare_tzone": general.get("compare_tzone", 0.0),
             "compare_grid_res": general.get("compare_grid_res", 2.0),
@@ -83,10 +107,10 @@ class ConfigManager:
             "min_lat": general.get("min_lat", -90.0),
             "max_lon": general.get("max_lon", 180.0),
             "min_lon": general.get("min_lon", -180.0),
-            "reference_nml": f"./nml/nml-yaml/{general.get('basename', 'config')}/ref-{general.get('basename', 'config')}.yaml",
-            "simulation_nml": f"./nml/nml-yaml/{general.get('basename', 'config')}/sim-{general.get('basename', 'config')}.yaml",
-            "statistics_nml": "./nml/nml-yaml/stats.yaml",
-            "figure_nml": "./nml/nml-yaml/figlib.yaml",
+            "reference_nml": ref_nml_path,
+            "simulation_nml": sim_nml_path,
+            "statistics_nml": stats_nml_path,
+            "figure_nml": figure_nml_path,
             "num_cores": general.get("num_cores", 4),
             "evaluation": general.get("evaluation", True),
             "comparison": general.get("comparison", False),

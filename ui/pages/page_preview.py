@@ -79,10 +79,16 @@ class PagePreview(BasePage):
 
     def load_from_config(self):
         """Load and generate previews."""
+        import os
         config = self.controller.config
 
-        # Generate previews
-        main_yaml = self.config_manager.generate_main_nml(config)
+        # Update export path with current project name
+        default_export = self._get_default_export_path()
+        self.export_path.set_path(default_export)
+
+        # Generate previews with absolute paths
+        openbench_root = self._get_openbench_root()
+        main_yaml = self.config_manager.generate_main_nml(config, openbench_root)
         self.main_preview.set_content(main_yaml)
 
         ref_yaml = self.config_manager.generate_ref_nml(config)
@@ -164,29 +170,33 @@ class PagePreview(BasePage):
         return os.getcwd()
 
     def _get_default_export_path(self) -> str:
-        """Get the default export path (OpenBench/nml/nml-yaml)."""
+        """Get the default export path (OpenBench/nml/nml-yaml/project_name)."""
         import os
         openbench_root = self._get_openbench_root()
+        basename = self.controller.config.get("general", {}).get("basename", "")
+
+        # Build absolute path: OpenBench/nml/nml-yaml/project_name
         nml_yaml_path = os.path.join(openbench_root, "nml", "nml-yaml")
-        if os.path.exists(nml_yaml_path):
-            return nml_yaml_path
-        return "./nml/nml-yaml/"
+        if basename:
+            nml_yaml_path = os.path.join(nml_yaml_path, basename)
+
+        return nml_yaml_path
 
     def export_and_run(self) -> bool:
         """Export files and trigger run. Returns True if successful."""
         import os
 
-        base_output_dir = self.export_path.path()
-        if not base_output_dir:
+        output_dir = self.export_path.path()
+        if not output_dir:
             QMessageBox.warning(self, "Error", "Please select an export directory.")
             return False
 
         # If path is relative, resolve it relative to OpenBench root
-        if not os.path.isabs(base_output_dir):
+        if not os.path.isabs(output_dir):
             openbench_root = self._get_openbench_root()
-            if base_output_dir.startswith("./"):
-                base_output_dir = base_output_dir[2:]
-            base_output_dir = os.path.join(openbench_root, base_output_dir)
+            if output_dir.startswith("./"):
+                output_dir = output_dir[2:]
+            output_dir = os.path.join(openbench_root, output_dir)
 
         # Validate first
         errors = self.config_manager.validate(self.controller.config)
@@ -195,9 +205,7 @@ class PagePreview(BasePage):
             QMessageBox.warning(self, "Validation Failed", error_msg)
             return False
 
-        # Create output directory with project name
-        basename = self.controller.config.get("general", {}).get("basename", "config")
-        output_dir = os.path.join(base_output_dir, basename)
+        # Create output directory (path already includes project name from _get_default_export_path)
         os.makedirs(output_dir, exist_ok=True)
 
         try:
