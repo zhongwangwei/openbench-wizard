@@ -245,10 +245,9 @@ class ConfigManager:
 class RunnerStatus(Enum):
     IDLE = "idle"
     RUNNING = "running"
-    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    STOPPED = "stopped"
 
 @dataclass
 class RunnerProgress:
@@ -271,10 +270,7 @@ class EvaluationRunner(QThread):
 
 | 方法 | 说明 |
 |------|------|
-| `set_config(config_path, output_dir)` | 设置配置文件和输出目录 |
 | `run()` | 线程主函数，执行评估 |
-| `pause()` | 暂停评估 |
-| `resume()` | 恢复评估 |
 | `stop()` | 停止评估 |
 
 ---
@@ -353,7 +349,6 @@ class YamlPreview(QWidget):
 
 ```python
 class ProgressDashboard(QWidget):
-    pause_requested = Signal()
     stop_requested = Signal()
     open_output_requested = Signal()
 ```

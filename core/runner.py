@@ -18,7 +18,6 @@ class RunnerStatus(Enum):
     """Runner status enum."""
     IDLE = "idle"
     RUNNING = "running"
-    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     STOPPED = "stopped"
@@ -46,7 +45,6 @@ class EvaluationRunner(QThread):
         super().__init__(parent)
         self.config_path = config_path
         self._stop_requested = False
-        self._pause_requested = False
         self._process: Optional[subprocess.Popen] = None
 
     def run(self):
@@ -360,11 +358,3 @@ class EvaluationRunner(QThread):
         """Request stop."""
         self._stop_requested = True
         self._kill_process_tree()
-
-    def pause(self):
-        """Request pause (not fully implemented - requires process support)."""
-        self._pause_requested = True
-
-    def resume(self):
-        """Resume from pause."""
-        self._pause_requested = False
