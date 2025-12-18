@@ -184,13 +184,16 @@ def convert_paths_in_dict(data: dict, base_dir: Optional[str] = None, path_keys:
     return result
 
 
-def validate_paths_in_dict(data: dict, path_keys: Optional[list] = None) -> list:
+def validate_paths_in_dict(data: dict, path_keys: Optional[list] = None,
+                          all_values_are_paths_keys: Optional[list] = None) -> list:
     """
     Validate all paths in a dictionary.
 
     Args:
         data: Dictionary containing paths
         path_keys: List of keys that contain paths
+        all_values_are_paths_keys: List of keys whose child dict has ALL values as paths
+                                   (e.g., 'def_nml' where all values are path strings)
 
     Returns:
         List of (key, path, error_message) tuples for invalid paths
@@ -201,6 +204,9 @@ def validate_paths_in_dict(data: dict, path_keys: Optional[list] = None) -> list
             "reference_nml", "simulation_nml", "statistics_nml", "figure_nml"
         ]
 
+    if all_values_are_paths_keys is None:
+        all_values_are_paths_keys = ["def_nml"]
+
     errors = []
 
     def _validate_recursive(d, prefix=""):
@@ -210,7 +216,15 @@ def validate_paths_in_dict(data: dict, path_keys: Optional[list] = None) -> list
         for key, value in d.items():
             full_key = f"{prefix}.{key}" if prefix else key
 
-            if isinstance(value, dict):
+            # Special handling for sections where ALL values are paths (like def_nml)
+            if key in all_values_are_paths_keys and isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    if isinstance(sub_value, str) and sub_value:
+                        sub_full_key = f"{full_key}.{sub_key}"
+                        is_valid, error = validate_path(sub_value, "file")
+                        if not is_valid:
+                            errors.append((sub_full_key, sub_value, error))
+            elif isinstance(value, dict):
                 _validate_recursive(value, full_key)
             elif isinstance(value, str) and key in path_keys and value:
                 # Determine path type
