@@ -257,3 +257,6 @@ class PageRefData(BasePage):
 
         ref_data = {"general": general, "def_nml": def_nml}
         self.controller.update_section("ref_data", ref_data)
+
+        # Trigger namelist sync
+        self.controller.sync_namelists()

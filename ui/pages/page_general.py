@@ -6,7 +6,7 @@ General settings page.
 from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QSpinBox, QDoubleSpinBox,
     QComboBox, QCheckBox, QGroupBox, QHBoxLayout,
-    QGridLayout, QLabel, QMessageBox
+    QGridLayout, QLabel, QMessageBox, QPushButton
 )
 
 from ui.pages.base_page import BasePage
@@ -27,12 +27,22 @@ class PageGeneral(BasePage):
         project_group = QGroupBox("Project Information")
         project_layout = QFormLayout(project_group)
 
-        self.basename_input = QLineEdit()
-        self.basename_input.setPlaceholderText("Project name (e.g., Initial_test)")
-        project_layout.addRow("Project Name:", self.basename_input)
-
+        # Output directory first
         self.basedir_input = PathSelector(mode="directory", placeholder="Output directory")
         project_layout.addRow("Output Directory:", self.basedir_input)
+
+        # Project name with confirm button
+        name_layout = QHBoxLayout()
+        self.basename_input = QLineEdit()
+        self.basename_input.setPlaceholderText("Project name (e.g., Initial_test)")
+        name_layout.addWidget(self.basename_input)
+
+        self.btn_confirm_name = QPushButton("Confirm")
+        self.btn_confirm_name.setFixedWidth(80)
+        self.btn_confirm_name.clicked.connect(self._on_confirm_project)
+        name_layout.addWidget(self.btn_confirm_name)
+
+        project_layout.addRow("Project Name:", name_layout)
 
         self.content_layout.addWidget(project_group)
 
@@ -189,6 +199,41 @@ class PageGeneral(BasePage):
         """Handle feature toggle changes."""
         self.save_to_config()
 
+    def _on_confirm_project(self):
+        """Handle confirm project button click."""
+        import os
+
+        basename = self.basename_input.text().strip()
+        if not basename:
+            QMessageBox.warning(self, "Error", "Please enter a project name.")
+            return
+
+        # Use the current output directory (don't overwrite it)
+        output_dir = self.basedir_input.path().strip()
+        if not output_dir:
+            QMessageBox.warning(self, "Error", "Please select an output directory first.")
+            return
+
+        # Save config
+        self.save_to_config()
+
+        # Create the output directory and nml subdirectories
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            os.makedirs(os.path.join(output_dir, "nml", "sim"), exist_ok=True)
+            os.makedirs(os.path.join(output_dir, "nml", "ref"), exist_ok=True)
+
+            # Trigger namelist sync
+            self.controller.sync_namelists()
+
+            QMessageBox.information(
+                self,
+                "Project Created",
+                f"Project folder created:\n{output_dir}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to create project folder:\n{str(e)}")
+
     def load_from_config(self):
         """Load settings from controller config."""
         import os
@@ -260,9 +305,17 @@ class PageGeneral(BasePage):
 
     def save_to_config(self):
         """Save settings to controller config."""
+        # Check if basename or basedir changed (affects output directory)
+        old_general = self.controller.config.get("general", {})
+        old_basename = old_general.get("basename", "")
+        old_basedir = old_general.get("basedir", "")
+
+        new_basename = self.basename_input.text()
+        new_basedir = self.basedir_input.path()
+
         general = {
-            "basename": self.basename_input.text(),
-            "basedir": self.basedir_input.path(),
+            "basename": new_basename,
+            "basedir": new_basedir,
             "syear": self.syear_spin.value(),
             "eyear": self.eyear_spin.value(),
             "min_year": self.min_year_spin.value(),
@@ -287,6 +340,10 @@ class PageGeneral(BasePage):
             "weight": self.weight_combo.currentText().lower(),
         }
         self.controller.update_section("general", general)
+
+        # Trigger namelist sync if output location changed
+        if new_basename != old_basename or new_basedir != old_basedir:
+            self.controller.sync_namelists()
 
     def validate(self) -> bool:
         """Validate page input."""

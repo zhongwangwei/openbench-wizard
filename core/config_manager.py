@@ -4,12 +4,13 @@ Configuration manager for loading, saving, and validating NML configs.
 """
 
 import os
-from typing import Dict, Any, List, Optional
+import shutil
+from typing import Dict, Any, List, Optional, Set, Tuple
 from pathlib import Path
 
 import yaml
 
-from core.path_utils import convert_paths_in_dict, get_openbench_root
+from core.path_utils import convert_paths_in_dict, get_openbench_root, to_absolute_path
 
 
 class ConfigManager:
@@ -58,13 +59,15 @@ class ConfigManager:
                 indent=2
             )
 
-    def generate_main_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None) -> str:
+    def generate_main_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None,
+                          output_dir: Optional[str] = None) -> str:
         """
         Generate main NML YAML content.
 
         Args:
             config: Full configuration dictionary
             openbench_root: OpenBench root directory for generating absolute paths
+            output_dir: Output directory path (for nml paths)
 
         Returns:
             YAML string
@@ -75,26 +78,29 @@ class ConfigManager:
         general = config.get("general", {})
         basename = general.get("basename", "config")
 
-        # Generate absolute paths if openbench_root is provided
+        # Use provided output_dir, or compute from config
+        if output_dir is None:
+            basedir = general.get("basedir", "")
+            if basedir and os.path.isabs(basedir):
+                output_dir = basedir
+            elif openbench_root:
+                output_dir = os.path.join(openbench_root, "output", basename)
+            else:
+                output_dir = general.get("basedir", "./output")
+
+        # Generate absolute paths - ref and sim are in nml folder
+        nml_dir = os.path.join(output_dir, "nml")
         if openbench_root:
-            nml_yaml_dir = os.path.join(openbench_root, "nml", "nml-yaml", basename)
-            ref_nml_path = os.path.join(nml_yaml_dir, f"ref-{basename}.yaml")
-            sim_nml_path = os.path.join(nml_yaml_dir, f"sim-{basename}.yaml")
+            ref_nml_path = os.path.join(nml_dir, f"ref-{basename}.yaml")
+            sim_nml_path = os.path.join(nml_dir, f"sim-{basename}.yaml")
             stats_nml_path = os.path.join(openbench_root, "nml", "nml-yaml", "stats.yaml")
             figure_nml_path = os.path.join(openbench_root, "nml", "nml-yaml", "figlib.yaml")
-            output_dir = os.path.join(openbench_root, "output", basename)
         else:
             # Fallback to relative paths if no root provided
-            ref_nml_path = f"./nml/nml-yaml/{basename}/ref-{basename}.yaml"
-            sim_nml_path = f"./nml/nml-yaml/{basename}/sim-{basename}.yaml"
+            ref_nml_path = f"./output/{basename}/nml/ref-{basename}.yaml"
+            sim_nml_path = f"./output/{basename}/nml/sim-{basename}.yaml"
             stats_nml_path = "./nml/nml-yaml/stats.yaml"
             figure_nml_path = "./nml/nml-yaml/figlib.yaml"
-            output_dir = general.get("basedir", "./output")
-
-        # Use basedir from config if it's already absolute, otherwise use generated path
-        basedir = general.get("basedir", "")
-        if basedir and os.path.isabs(basedir):
-            output_dir = basedir
 
         main_config["general"] = {
             "basename": basename,
@@ -150,23 +156,33 @@ class ConfigManager:
             indent=2
         )
 
-    def generate_ref_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None) -> str:
+    def generate_ref_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None,
+                         output_dir: Optional[str] = None) -> str:
         """
         Generate reference NML YAML content.
 
         Args:
             config: Full configuration dictionary
             openbench_root: OpenBench root directory for generating absolute paths
+            output_dir: Output directory for local nml paths
 
         Returns:
             YAML string
         """
-        ref_data = config.get("ref_data", {})
+        import copy
+        ref_data = copy.deepcopy(config.get("ref_data", {}))
 
         # Convert all paths to absolute
         if openbench_root is None:
             openbench_root = get_openbench_root()
         ref_data = convert_paths_in_dict(ref_data, openbench_root)
+
+        # Update def_nml paths to point to local copies
+        if output_dir:
+            nml_dir = os.path.join(output_dir, "nml", "ref")
+            def_nml = ref_data.get("def_nml", {})
+            for source_name in def_nml:
+                def_nml[source_name] = os.path.join(nml_dir, f"{source_name}.yaml")
 
         return yaml.dump(
             ref_data,
@@ -176,23 +192,33 @@ class ConfigManager:
             indent=2
         )
 
-    def generate_sim_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None) -> str:
+    def generate_sim_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None,
+                         output_dir: Optional[str] = None) -> str:
         """
         Generate simulation NML YAML content.
 
         Args:
             config: Full configuration dictionary
             openbench_root: OpenBench root directory for generating absolute paths
+            output_dir: Output directory for local nml paths
 
         Returns:
             YAML string
         """
-        sim_data = config.get("sim_data", {})
+        import copy
+        sim_data = copy.deepcopy(config.get("sim_data", {}))
 
         # Convert all paths to absolute
         if openbench_root is None:
             openbench_root = get_openbench_root()
         sim_data = convert_paths_in_dict(sim_data, openbench_root)
+
+        # Update def_nml paths to point to local copies
+        if output_dir:
+            nml_dir = os.path.join(output_dir, "nml", "sim")
+            def_nml = sim_data.get("def_nml", {})
+            for source_name in def_nml:
+                def_nml[source_name] = os.path.join(nml_dir, f"{source_name}.yaml")
 
         return yaml.dump(
             sim_data,
@@ -276,29 +302,379 @@ class ConfigManager:
         if openbench_root is None:
             openbench_root = get_openbench_root()
 
-        os.makedirs(output_dir, exist_ok=True)
+        # Create output directory and nml subdirectory
+        nml_dir = os.path.join(output_dir, "nml")
+        os.makedirs(nml_dir, exist_ok=True)
 
         files = {}
 
-        # Main NML
-        main_path = os.path.join(output_dir, f"main-{basename}.yaml")
-        main_content = self.generate_main_nml(config, openbench_root)
+        # Main NML - goes in nml folder
+        main_path = os.path.join(nml_dir, f"main-{basename}.yaml")
+        main_content = self.generate_main_nml(config, openbench_root, output_dir)
         with open(main_path, 'w', encoding='utf-8') as f:
             f.write(main_content)
         files["main"] = main_path
 
-        # Ref NML
-        ref_path = os.path.join(output_dir, f"ref-{basename}.yaml")
-        ref_content = self.generate_ref_nml(config, openbench_root)
+        # Ref NML - goes in nml folder
+        ref_path = os.path.join(nml_dir, f"ref-{basename}.yaml")
+        ref_content = self.generate_ref_nml(config, openbench_root, output_dir)
         with open(ref_path, 'w', encoding='utf-8') as f:
             f.write(ref_content)
         files["ref"] = ref_path
 
-        # Sim NML
-        sim_path = os.path.join(output_dir, f"sim-{basename}.yaml")
-        sim_content = self.generate_sim_nml(config, openbench_root)
+        # Sim NML - goes in nml folder
+        sim_path = os.path.join(nml_dir, f"sim-{basename}.yaml")
+        sim_content = self.generate_sim_nml(config, openbench_root, output_dir)
         with open(sim_path, 'w', encoding='utf-8') as f:
             f.write(sim_content)
         files["sim"] = sim_path
 
+        # Sync namelists to nml/sim and nml/ref subdirectories
+        self.sync_namelists(config, output_dir, openbench_root)
+
         return files
+
+    def sync_namelists(
+        self,
+        config: Dict[str, Any],
+        output_dir: str,
+        openbench_root: Optional[str] = None
+    ) -> Dict[str, str]:
+        """
+        Sync namelists to output directory's nml/ subdirectory.
+
+        Args:
+            config: Configuration dictionary
+            output_dir: Output directory path
+            openbench_root: OpenBench root directory
+
+        Returns:
+            Dictionary of {source_name: copied_path}
+        """
+        if openbench_root is None:
+            openbench_root = get_openbench_root()
+
+        # Create nml subdirectories
+        nml_dir = os.path.join(output_dir, "nml")
+        sim_nml_dir = os.path.join(nml_dir, "sim")
+        ref_nml_dir = os.path.join(nml_dir, "ref")
+        os.makedirs(sim_nml_dir, exist_ok=True)
+        os.makedirs(ref_nml_dir, exist_ok=True)
+
+        # Get selected evaluation items
+        eval_items = config.get("evaluation_items", {})
+        selected_items = [k for k, v in eval_items.items() if v]
+
+        copied_files = {}
+
+        # Process simulation data namelists
+        sim_data = config.get("sim_data", {})
+        sim_def_nml = sim_data.get("def_nml", {})
+        sim_copied, sim_model_files = self._copy_data_namelists(
+            sim_def_nml, sim_nml_dir, selected_items, openbench_root, "sim"
+        )
+        copied_files.update(sim_copied)
+
+        # Copy model definition files for sim
+        for model_path in sim_model_files:
+            if model_path:
+                # Try to find the actual file (handle .nml -> .yaml conversion)
+                actual_path = self._resolve_model_path(model_path)
+                if actual_path and os.path.exists(actual_path):
+                    # Always use .yaml extension for output
+                    model_name = os.path.splitext(os.path.basename(actual_path))[0] + ".yaml"
+                    dest_path = os.path.join(sim_nml_dir, model_name)
+                    self._copy_model_definition(actual_path, dest_path, selected_items)
+                    copied_files[f"model_{model_name}"] = dest_path
+
+        # Process reference data namelists
+        ref_data = config.get("ref_data", {})
+        ref_def_nml = ref_data.get("def_nml", {})
+        ref_copied, _ = self._copy_data_namelists(
+            ref_def_nml, ref_nml_dir, selected_items, openbench_root, "ref"
+        )
+        copied_files.update(ref_copied)
+
+        # Note: Don't update config paths here - keep original paths in config
+        # The exported YAML files handle path conversion separately
+
+        return copied_files
+
+    def _copy_data_namelists(
+        self,
+        def_nml: Dict[str, str],
+        dest_dir: str,
+        selected_items: List[str],
+        openbench_root: str,
+        data_type: str
+    ) -> Tuple[Dict[str, str], Set[str]]:
+        """
+        Copy data source namelists with filtering.
+
+        Args:
+            def_nml: Dictionary of {source_name: nml_path}
+            dest_dir: Destination directory
+            selected_items: List of selected evaluation items
+            openbench_root: OpenBench root directory
+            data_type: "sim" or "ref"
+
+        Returns:
+            Tuple of (copied_files dict, model_definition_paths set)
+        """
+        copied_files = {}
+        model_files = set()
+
+        for source_name, nml_path in def_nml.items():
+            if not nml_path:
+                continue
+
+            # Resolve to absolute path
+            src_path = to_absolute_path(nml_path, openbench_root)
+
+            # Try YAML path if .nml doesn't exist
+            if not os.path.exists(src_path):
+                yaml_path = src_path.replace("nml-Fortran", "nml-yaml").replace(".nml", ".yaml")
+                if os.path.exists(yaml_path):
+                    src_path = yaml_path
+
+            if not os.path.exists(src_path):
+                continue
+
+            # Copy with filtering
+            dest_path = os.path.join(dest_dir, f"{source_name}.yaml")
+            model_path = self._copy_namelist_filtered(
+                src_path, dest_path, selected_items, openbench_root
+            )
+            copied_files[source_name] = dest_path
+
+            if model_path:
+                model_files.add(model_path)
+
+        return copied_files, model_files
+
+    def _copy_namelist_filtered(
+        self,
+        src_path: str,
+        dest_path: str,
+        selected_items: List[str],
+        openbench_root: str
+    ) -> Optional[str]:
+        """
+        Copy a namelist file with smart filtering.
+
+        Only keeps general section and selected evaluation items.
+        Converts all paths to absolute.
+
+        Args:
+            src_path: Source file path
+            dest_path: Destination file path
+            selected_items: List of selected evaluation items
+            openbench_root: OpenBench root directory
+
+        Returns:
+            Model definition path if found, None otherwise
+        """
+        try:
+            with open(src_path, 'r', encoding='utf-8') as f:
+                content = yaml.safe_load(f) or {}
+        except Exception:
+            return None
+
+        # Build filtered content
+        filtered = {}
+        model_path = None
+
+        # Always keep general section
+        if "general" in content:
+            general = content["general"].copy()
+
+            # Convert paths to absolute
+            if "root_dir" in general and general["root_dir"]:
+                general["root_dir"] = to_absolute_path(general["root_dir"], openbench_root)
+            if "dir" in general and general["dir"]:
+                general["dir"] = to_absolute_path(general["dir"], openbench_root)
+            if "fulllist" in general and general["fulllist"]:
+                general["fulllist"] = to_absolute_path(general["fulllist"], openbench_root)
+            if "model_namelist" in general and general["model_namelist"]:
+                model_path = to_absolute_path(general["model_namelist"], openbench_root)
+                # Update to point to local nml directory (always use .yaml extension)
+                model_basename = os.path.splitext(os.path.basename(model_path))[0]
+                dest_dir = os.path.dirname(dest_path)
+                general["model_namelist"] = os.path.join(dest_dir, model_basename + ".yaml")
+
+            filtered["general"] = general
+
+        # Keep only selected evaluation items
+        for item in selected_items:
+            if item in content:
+                item_data = content[item].copy()
+                # sub_dir doesn't need path conversion (it's relative to root_dir)
+                filtered[item] = item_data
+
+        # Write filtered content
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        with open(dest_path, 'w', encoding='utf-8') as f:
+            yaml.dump(
+                filtered,
+                f,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+                indent=2
+            )
+
+        return model_path
+
+    def _copy_model_definition(
+        self,
+        src_path: str,
+        dest_path: str,
+        selected_items: List[str]
+    ):
+        """
+        Copy a model definition file with filtering.
+
+        Only keeps general section and selected evaluation items.
+
+        Args:
+            src_path: Source file path
+            dest_path: Destination file path
+            selected_items: List of selected evaluation items
+        """
+        try:
+            with open(src_path, 'r', encoding='utf-8') as f:
+                content = yaml.safe_load(f) or {}
+        except Exception:
+            return
+
+        # Build filtered content
+        filtered = {}
+
+        # Always keep general section
+        if "general" in content:
+            filtered["general"] = content["general"].copy()
+
+        # Keep only selected evaluation items
+        for item in selected_items:
+            if item in content:
+                filtered[item] = content[item].copy()
+
+        # Write filtered content
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        with open(dest_path, 'w', encoding='utf-8') as f:
+            yaml.dump(
+                filtered,
+                f,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+                indent=2
+            )
+
+    def _resolve_model_path(self, model_path: str) -> Optional[str]:
+        """
+        Resolve a model path, handling .nml -> .yaml conversion and path variations.
+
+        Args:
+            model_path: Path to model definition file (may be .nml or .yaml)
+
+        Returns:
+            Actual path to the file if found, None otherwise
+        """
+        if os.path.exists(model_path):
+            return model_path
+
+        # Try converting .nml to .yaml
+        if model_path.endswith(".nml"):
+            yaml_path = model_path[:-4] + ".yaml"
+            if os.path.exists(yaml_path):
+                return yaml_path
+
+            # Try with nml-yaml directory structure
+            # e.g., /path/nml/Mod_variables_definition/CoLM.nml
+            # -> /path/nml/nml-yaml/Mod_variables_definition/CoLM.yaml
+            yaml_path = model_path.replace("/nml/", "/nml/nml-yaml/").replace(".nml", ".yaml")
+            if os.path.exists(yaml_path):
+                return yaml_path
+
+        # Try adding nml-yaml to path for yaml files too
+        if "/nml/" in model_path and "/nml-yaml/" not in model_path:
+            yaml_path = model_path.replace("/nml/", "/nml/nml-yaml/")
+            if os.path.exists(yaml_path):
+                return yaml_path
+
+        # If path points to output directory but file doesn't exist,
+        # search for the model file by name in standard locations
+        model_name = os.path.basename(model_path)
+        model_basename = os.path.splitext(model_name)[0]
+        openbench_root = get_openbench_root()
+
+        # Try common model definition locations
+        search_paths = [
+            os.path.join(openbench_root, "nml", "nml-yaml", "Mod_variables_definition", f"{model_basename}.yaml"),
+            os.path.join(openbench_root, "nml", "nml-yaml", "Mod_variables_definition", f"{model_basename}.nml"),
+            os.path.join(openbench_root, "nml", "Mod_variables_definition", f"{model_basename}.yaml"),
+            os.path.join(openbench_root, "nml", "Mod_variables_definition", f"{model_basename}.nml"),
+        ]
+
+        for search_path in search_paths:
+            if os.path.exists(search_path):
+                return search_path
+
+        return None
+
+    def _update_config_nml_paths(self, config: Dict[str, Any], output_dir: str):
+        """
+        Update config def_nml paths to point to local nml/ directory.
+
+        Args:
+            config: Configuration dictionary (modified in place)
+            output_dir: Output directory path
+        """
+        nml_dir = os.path.join(output_dir, "nml")
+
+        # Update sim_data def_nml paths
+        sim_data = config.get("sim_data", {})
+        sim_def_nml = sim_data.get("def_nml", {})
+        for source_name in sim_def_nml:
+            sim_def_nml[source_name] = os.path.join(nml_dir, "sim", f"{source_name}.yaml")
+
+        # Update ref_data def_nml paths
+        ref_data = config.get("ref_data", {})
+        ref_def_nml = ref_data.get("def_nml", {})
+        for source_name in ref_def_nml:
+            ref_def_nml[source_name] = os.path.join(nml_dir, "ref", f"{source_name}.yaml")
+
+    def cleanup_unused_namelists(self, config: Dict[str, Any], output_dir: str):
+        """
+        Remove namelist files that are no longer used.
+
+        Args:
+            config: Configuration dictionary
+            output_dir: Output directory path
+        """
+        nml_dir = os.path.join(output_dir, "nml")
+        if not os.path.exists(nml_dir):
+            return
+
+        # Get currently used sources
+        sim_sources = set(config.get("sim_data", {}).get("def_nml", {}).keys())
+        ref_sources = set(config.get("ref_data", {}).get("def_nml", {}).keys())
+
+        # Clean sim directory
+        sim_nml_dir = os.path.join(nml_dir, "sim")
+        if os.path.exists(sim_nml_dir):
+            for filename in os.listdir(sim_nml_dir):
+                if filename.endswith(".yaml"):
+                    source_name = filename[:-5]  # Remove .yaml
+                    if source_name not in sim_sources and not source_name.startswith("model_"):
+                        os.remove(os.path.join(sim_nml_dir, filename))
+
+        # Clean ref directory
+        ref_nml_dir = os.path.join(nml_dir, "ref")
+        if os.path.exists(ref_nml_dir):
+            for filename in os.listdir(ref_nml_dir):
+                if filename.endswith(".yaml"):
+                    source_name = filename[:-5]  # Remove .yaml
+                    if source_name not in ref_sources:
+                        os.remove(os.path.join(ref_nml_dir, filename))

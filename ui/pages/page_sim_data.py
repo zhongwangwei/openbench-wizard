@@ -247,3 +247,6 @@ class PageSimData(BasePage):
 
         sim_data = {"general": general, "def_nml": def_nml}
         self.controller.update_section("sim_data", sim_data)
+
+        # Trigger namelist sync
+        self.controller.sync_namelists()

@@ -3,8 +3,12 @@
 Wizard flow controller - manages page navigation and visibility.
 """
 
+import os
 from typing import List, Dict, Any, Optional
 from PySide6.QtCore import QObject, Signal
+
+from core.config_manager import ConfigManager
+from core.path_utils import get_openbench_root
 
 
 class WizardController(QObject):
@@ -54,6 +58,8 @@ class WizardController(QObject):
         self._config: Dict[str, Any] = self._default_config()
         self._current_page: str = "general"
         self._project_root: str = ""
+        self._config_manager = ConfigManager()
+        self._auto_sync_enabled = True
 
     @property
     def project_root(self) -> str:
@@ -218,3 +224,58 @@ class WizardController(QObject):
         self.config_updated.emit(self._config)
         self.pages_visibility_changed.emit()
         self.page_changed.emit(self._current_page)
+
+    @property
+    def config_manager(self) -> ConfigManager:
+        """Get the config manager instance."""
+        return self._config_manager
+
+    @property
+    def auto_sync_enabled(self) -> bool:
+        """Check if auto sync is enabled."""
+        return self._auto_sync_enabled
+
+    @auto_sync_enabled.setter
+    def auto_sync_enabled(self, value: bool):
+        """Enable or disable auto sync."""
+        self._auto_sync_enabled = value
+
+    def get_output_dir(self) -> str:
+        """Get the output directory path: {basedir}/{basename}/"""
+        general = self._config.get("general", {})
+        basedir = general.get("basedir", "")
+        basename = general.get("basename", "config")
+
+        if basedir and os.path.isabs(basedir):
+            # basedir is absolute, append basename as subdirectory
+            return os.path.join(basedir, basename)
+        # Use project root to construct output path
+        openbench_root = self._project_root or get_openbench_root()
+        return os.path.join(openbench_root, "output", basename)
+
+    def sync_namelists(self):
+        """
+        Sync namelists to output directory.
+        Called automatically when config changes if auto_sync_enabled is True.
+        """
+        if not self._auto_sync_enabled:
+            return
+
+        # Check if we have enough config to sync
+        general = self._config.get("general", {})
+        basename = general.get("basename", "")
+        if not basename:
+            return  # No project name yet, skip sync
+
+        output_dir = self.get_output_dir()
+        openbench_root = self._project_root or get_openbench_root()
+
+        try:
+            self._config_manager.sync_namelists(
+                self._config, output_dir, openbench_root
+            )
+            # Also cleanup unused files
+            self._config_manager.cleanup_unused_namelists(self._config, output_dir)
+        except Exception as e:
+            # Log error but don't crash
+            print(f"Warning: Failed to sync namelists: {e}")

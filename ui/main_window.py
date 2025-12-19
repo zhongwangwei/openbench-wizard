@@ -160,6 +160,12 @@ class MainWindow(QMainWindow):
 
         nav_bar_layout.addStretch()
 
+        # Rerun button (only visible on run_monitor page)
+        self.btn_rerun = QPushButton("Rerun")
+        self.btn_rerun.setMinimumWidth(100)
+        self.btn_rerun.setVisible(False)
+        nav_bar_layout.addWidget(self.btn_rerun)
+
         self.btn_next = QPushButton("Next")
         self.btn_next.setMinimumWidth(100)
         nav_bar_layout.addWidget(self.btn_next)
@@ -206,6 +212,7 @@ class MainWindow(QMainWindow):
         # Navigation buttons
         self.btn_back.clicked.connect(self._on_back_clicked)
         self.btn_next.clicked.connect(self._on_next_clicked)
+        self.btn_rerun.clicked.connect(self._on_rerun_clicked)
         self.btn_load.clicked.connect(self._on_load_clicked)
         self.btn_new.clicked.connect(self._on_new_clicked)
 
@@ -245,6 +252,9 @@ class MainWindow(QMainWindow):
         """Update Back/Next button states."""
         self.btn_back.setEnabled(self.controller.prev_page() is not None)
 
+        # Show Rerun button only on run_monitor page
+        self.btn_rerun.setVisible(self.controller.current_page == "run_monitor")
+
         next_page = self.controller.next_page()
         if next_page is None:
             self.btn_next.setText("Finish")
@@ -267,8 +277,27 @@ class MainWindow(QMainWindow):
         """Handle sidebar navigation selection."""
         item = self.nav_list.item(row)
         if item and item.flags() & Qt.ItemIsEnabled:
+            # Get page_id first before any operations that might invalidate the item
             page_id = item.data(Qt.UserRole)
+
+            # Save current page before switching (without triggering sync)
+            self._save_current_page(trigger_sync=False)
+
             self.controller.go_to_page(page_id)
+
+    def _save_current_page(self, trigger_sync: bool = True):
+        """Save the current page's data to config."""
+        current_page = self.pages.get(self.controller.current_page)
+        if current_page and hasattr(current_page, 'save_to_config'):
+            # Temporarily disable auto sync if requested
+            if not trigger_sync:
+                old_auto_sync = self.controller.auto_sync_enabled
+                self.controller.auto_sync_enabled = False
+
+            current_page.save_to_config()
+
+            if not trigger_sync:
+                self.controller.auto_sync_enabled = old_auto_sync
 
     def _on_page_changed(self, page_id: str):
         """Handle page change."""
@@ -278,6 +307,8 @@ class MainWindow(QMainWindow):
 
     def _on_back_clicked(self):
         """Handle Back button click."""
+        # Save current page before going back (without triggering sync)
+        self._save_current_page(trigger_sync=False)
         self.controller.go_prev()
 
     def _on_next_clicked(self):
@@ -303,6 +334,12 @@ class MainWindow(QMainWindow):
                 "Configuration wizard completed!"
             )
             self.close()
+
+    def _on_rerun_clicked(self):
+        """Handle Rerun button click - re-export and run."""
+        preview_page = self.pages.get("preview")
+        if preview_page:
+            preview_page.export_and_run()
 
     def _on_load_clicked(self):
         """Handle Load Config button click."""
