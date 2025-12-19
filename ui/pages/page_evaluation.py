@@ -82,3 +82,6 @@ class PageEvaluation(BasePage):
         """Save to config."""
         selection = self.checkbox_group.get_selection()
         self.controller.update_section("evaluation_items", selection)
+
+        # Trigger namelist sync (evaluation items affect filtering)
+        self.controller.sync_namelists()

@@ -46,6 +46,9 @@ class EvaluationRunner(QThread):
         self.config_path = config_path
         self._stop_requested = False
         self._process: Optional[subprocess.Popen] = None
+        self._total_variables = 0
+        self._completed_variables = set()
+        self._current_variable = ""
 
     def run(self):
         """Run the evaluation."""
@@ -311,32 +314,60 @@ class EvaluationRunner(QThread):
 
     def _parse_progress(self, line: str, current_progress: float) -> tuple:
         """Parse progress from log line."""
-        var = ""
+        var = self._current_variable
         stage = ""
 
-        # Simple parsing - customize based on actual log format
         line_lower = line.lower()
 
-        if "processing" in line_lower:
+        # Detect variable being processed
+        # Common patterns: "Processing Variable_Name", "Evaluating Variable_Name"
+        # Or: "Variable_Name: starting evaluation"
+        if "processing" in line_lower or "evaluating" in line_lower:
             # Try to extract variable name
-            if "Processing" in line:
-                parts = line.split("Processing")
-                if len(parts) > 1:
-                    var = parts[1].strip().split()[0] if parts[1].strip() else ""
+            for keyword in ["Processing", "Evaluating", "processing", "evaluating"]:
+                if keyword in line:
+                    parts = line.split(keyword)
+                    if len(parts) > 1:
+                        # Get the first word after the keyword
+                        remaining = parts[1].strip()
+                        if remaining:
+                            # Handle patterns like "Processing Gross_Primary_Productivity..."
+                            var_name = remaining.split()[0].strip('.:,')
+                            if var_name and len(var_name) > 2:  # Filter out short fragments
+                                self._current_variable = var_name
+                                var = var_name
+                        break
 
-        if "evaluation" in line_lower:
+        # Detect stage
+        if "evaluation" in line_lower and "item" not in line_lower:
             stage = "Evaluation"
-            current_progress = min(current_progress + 2, 95)
         elif "comparison" in line_lower:
             stage = "Comparison"
-            current_progress = min(current_progress + 2, 95)
-        elif "statistics" in line_lower:
+        elif "statistic" in line_lower:
             stage = "Statistics"
-            current_progress = min(current_progress + 2, 95)
-        elif "complete" in line_lower or "finished" in line_lower:
-            current_progress = min(current_progress + 5, 95)
+
+        # Detect completion of a variable
+        # Patterns: "Gross_Primary_Productivity completed", "finished processing X"
+        if ("completed" in line_lower or "finished" in line_lower or "done" in line_lower):
+            if self._current_variable and self._current_variable not in self._completed_variables:
+                self._completed_variables.add(self._current_variable)
+
+        # Calculate progress based on completed variables
+        if self._total_variables > 0:
+            # Reserve 5% for initialization, 5% for finalization
+            variable_progress = (len(self._completed_variables) / self._total_variables) * 90
+            current_progress = min(5 + variable_progress, 95)
+        else:
+            # Fallback: slow increment
+            if stage or "complete" in line_lower:
+                current_progress = min(current_progress + 0.5, 95)
 
         return current_progress, var, stage
+
+    def set_total_variables(self, count: int):
+        """Set the total number of variables to process."""
+        self._total_variables = count
+        self._completed_variables = set()
 
     def _emit_progress(
         self,

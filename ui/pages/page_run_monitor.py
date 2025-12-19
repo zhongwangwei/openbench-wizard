@@ -76,6 +76,7 @@ class PageRunMonitor(BasePage):
 
         # Create and start runner
         self._runner = EvaluationRunner(config_path, self)
+        self._runner.set_total_variables(len(selected))  # Set total for progress calculation
         self._runner.progress_updated.connect(self._on_progress)
         self._runner.log_message.connect(self._on_log)
         self._runner.finished_signal.connect(self._on_finished)

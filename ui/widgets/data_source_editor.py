@@ -138,6 +138,11 @@ class DataSourceEditor(QDialog):
         var_group = QGroupBox("Variable Mapping")
         var_layout = QFormLayout(var_group)
 
+        # Sub directory (optional, relative to root_dir)
+        self.sub_dir_input = QLineEdit()
+        self.sub_dir_input.setPlaceholderText("Optional subdirectory (e.g., Latent_Heat/FLUXCOM)")
+        var_layout.addRow("Sub Directory:", self.sub_dir_input)
+
         self.varname_input = QLineEdit()
         self.varname_input.setPlaceholderText("Variable name in file (e.g., E)")
         var_layout.addRow("Variable Name:", self.varname_input)
@@ -206,12 +211,11 @@ class DataSourceEditor(QDialog):
         general = data.get("general", data)
         openbench_root = get_openbench_root()
 
-        if "root_dir" in general:
-            # Convert to absolute path when loading
-            root_dir = general["root_dir"]
-            if root_dir:
-                root_dir = to_absolute_path(root_dir, openbench_root)
-            self.root_dir.set_path(root_dir)
+        # Handle both "root_dir" (ref) and "dir" (sim) field names
+        root_dir_value = general.get("root_dir") or general.get("dir", "")
+        if root_dir_value:
+            root_dir_value = to_absolute_path(root_dir_value, openbench_root)
+            self.root_dir.set_path(root_dir_value)
 
         if "data_type" in general:
             # Support both "stn" and "station" as station data type
@@ -251,6 +255,8 @@ class DataSourceEditor(QDialog):
 
         # Variable mapping (might be at top level for ref data)
         var_data = data if "varname" in data else general
+        if "sub_dir" in var_data:
+            self.sub_dir_input.setText(str(var_data["sub_dir"]))
         if "varname" in var_data:
             self.varname_input.setText(str(var_data["varname"]))
         if "varunit" in var_data:
@@ -278,13 +284,17 @@ class DataSourceEditor(QDialog):
             root_dir = to_absolute_path(root_dir, openbench_root)
 
         # Build general section
+        # Use "dir" for sim data, "root_dir" for ref data
         general = {
-            "root_dir": root_dir,
             "data_type": "stn" if is_station else "grid",
             "data_groupby": self.groupby_combo.currentText(),
             "tim_res": self.tim_res_combo.currentText(),
             "timezone": self.timezone_spin.value(),
         }
+        if self.source_type == "sim":
+            general["dir"] = root_dir
+        else:
+            general["root_dir"] = root_dir
 
         # Handle year fields (preserve empty strings for station data)
         syear_text = self.syear_input.text().strip()
@@ -311,6 +321,8 @@ class DataSourceEditor(QDialog):
         data = {"general": general}
 
         # Add variable mapping
+        if self.sub_dir_input.text():
+            data["sub_dir"] = self.sub_dir_input.text()
         if self.varname_input.text():
             data["varname"] = self.varname_input.text()
         if self.varunit_input.text():
