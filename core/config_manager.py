@@ -82,7 +82,11 @@ class ConfigManager:
         if output_dir is None:
             basedir = general.get("basedir", "")
             if basedir and os.path.isabs(basedir):
-                output_dir = basedir
+                # Check if basedir already ends with basename to avoid duplication
+                if os.path.basename(basedir.rstrip(os.sep)) == basename:
+                    output_dir = basedir
+                else:
+                    output_dir = os.path.join(basedir, basename)
             elif openbench_root:
                 output_dir = os.path.join(openbench_root, "output", basename)
             else:
@@ -104,9 +108,13 @@ class ConfigManager:
             stats_nml_path = "./nml/nml-yaml/stats.yaml"
             figure_nml_path = "./nml/nml-yaml/figlib.yaml"
 
+        # For OpenBench, basedir should be the PARENT directory, not including basename
+        # Because OpenBench computes output path as: basedir/basename
+        parent_dir = os.path.dirname(output_dir.rstrip(os.sep))
+
         main_config["general"] = {
             "basename": basename,
-            "basedir": output_dir,
+            "basedir": parent_dir,
             "compare_tim_res": general.get("compare_tim_res", "month"),
             "compare_tzone": general.get("compare_tzone", 0.0),
             "compare_grid_res": general.get("compare_grid_res", 2.0),

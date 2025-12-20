@@ -219,8 +219,7 @@ class PageRunMonitor(BasePage):
 
     def _open_output(self):
         """Open output directory."""
-        output_dir = self.controller.config.get("general", {}).get("basedir", "./output")
-        output_dir = os.path.abspath(output_dir)
+        output_dir = self.controller.get_output_dir()
 
         if os.path.exists(output_dir):
             # Cross-platform open folder

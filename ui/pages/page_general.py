@@ -218,14 +218,17 @@ class PageGeneral(BasePage):
             QMessageBox.warning(self, "Error", "Please enter a project name.")
             return
 
-        # Use the current output directory (don't overwrite it)
-        output_dir = self.basedir_input.path().strip()
-        if not output_dir:
+        # Check if output directory is set
+        basedir = self.basedir_input.path().strip()
+        if not basedir:
             QMessageBox.warning(self, "Error", "Please select an output directory first.")
             return
 
-        # Save config
+        # Save config first so get_output_dir() can compute correctly
         self.save_to_config()
+
+        # Use controller.get_output_dir() to get the proper output path (basedir/basename)
+        output_dir = self.controller.get_output_dir()
 
         # Create the output directory and nml subdirectories
         try:
@@ -317,13 +320,21 @@ class PageGeneral(BasePage):
 
     def save_to_config(self):
         """Save settings to controller config."""
+        import os
+
         # Check if basename or basedir changed (affects output directory)
         old_general = self.controller.config.get("general", {})
         old_basename = old_general.get("basename", "")
         old_basedir = old_general.get("basedir", "")
 
-        new_basename = self.basename_input.text()
-        new_basedir = self.basedir_input.path()
+        new_basename = self.basename_input.text().strip()
+        new_basedir = self.basedir_input.path().strip()
+
+        # If basedir ends with basename, use the parent directory as basedir
+        # This prevents path duplication like /path/F58/F58
+        if new_basename and new_basedir:
+            if os.path.basename(new_basedir.rstrip(os.sep)) == new_basename:
+                new_basedir = os.path.dirname(new_basedir.rstrip(os.sep))
 
         general = {
             "basename": new_basename,
