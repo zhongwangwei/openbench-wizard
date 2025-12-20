@@ -119,7 +119,7 @@ class ProgressDashboard(QWidget):
 
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setMaximumBlockCount(1000)
+        self.log_output.setMaximumBlockCount(10000)  # Increased from 1000 to handle longer runs
         self.log_output.setMinimumHeight(200)  # Ensure minimum visible area
         log_layout.addWidget(self.log_output, 1)
 

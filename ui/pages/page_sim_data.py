@@ -166,6 +166,7 @@ class PageSimData(BasePage):
         sim_data = self.controller.config.get("sim_data", {})
         general = sim_data.get("general", {})
         def_nml = sim_data.get("def_nml", {})
+        saved_source_configs = sim_data.get("source_configs", {})  # Get saved configs
 
         eval_items = self.controller.config.get("evaluation_items", {})
         selected = [k for k, v in eval_items.items() if v]
@@ -178,6 +179,13 @@ class PageSimData(BasePage):
 
             self._source_configs[var_name] = {}
             for source_name in sources:
+                # First check if we have saved source config (from previous edits)
+                if source_name in saved_source_configs:
+                    self._source_configs[var_name][source_name] = saved_source_configs[source_name].copy()
+                    self._update_source_list(var_name)
+                    continue
+
+                # Otherwise load from def_nml file
                 def_nml_path = def_nml.get(source_name, "")
                 source_data = {"def_nml_path": def_nml_path}
 
@@ -236,6 +244,7 @@ class PageSimData(BasePage):
         """Save to config."""
         general = {}
         def_nml = {}
+        source_configs = {}  # Store full source configurations
 
         for var_name, sources in self._source_configs.items():
             if sources:
@@ -243,9 +252,22 @@ class PageSimData(BasePage):
                 general[key] = list(sources.keys())
 
                 for source_name, source_data in sources.items():
-                    def_nml[source_name] = source_data.get("def_nml_path", "")
+                    # Get def_nml_path if it exists, otherwise generate one
+                    def_nml_path = source_data.get("def_nml_path", "")
+                    if not def_nml_path:
+                        # Will be generated during namelist sync
+                        basedir = self.controller.config.get("general", {}).get("basedir", "./output")
+                        def_nml_path = f"{basedir}/nml/sim/{source_name}.yaml"
+                    def_nml[source_name] = def_nml_path
 
-        sim_data = {"general": general, "def_nml": def_nml}
+                    # Store the full source configuration for namelist sync
+                    source_configs[source_name] = source_data
+
+        sim_data = {
+            "general": general,
+            "def_nml": def_nml,
+            "source_configs": source_configs  # Include full configs for sync
+        }
         self.controller.update_section("sim_data", sim_data)
 
         # Trigger namelist sync

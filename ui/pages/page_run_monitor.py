@@ -55,15 +55,17 @@ class PageRunMonitor(BasePage):
             return
 
         # Build task list from config
-        eval_items = self.controller.config.get("evaluation_items", {})
+        config = self.controller.config
+        eval_items = config.get("evaluation_items", {})
         selected = [k for k, v in eval_items.items() if v]
+        general = config.get("general", {})
 
         tasks = []
         for item in selected:
             tasks.append(f"{item} - Evaluation")
-            if self.controller.config.get("general", {}).get("comparison"):
+            if general.get("comparison"):
                 tasks.append(f"{item} - Comparison")
-            if self.controller.config.get("general", {}).get("statistics"):
+            if general.get("statistics"):
                 tasks.append(f"{item} - Statistics")
 
         self.dashboard.reset()
@@ -74,9 +76,53 @@ class PageRunMonitor(BasePage):
         if tasks:
             self.dashboard.update_task_status(tasks[0], TaskStatus.RUNNING)
 
+        # Calculate task counts for accurate progress
+        num_variables = len(selected)
+
+        # Count reference sources
+        ref_data = config.get("ref_data", {})
+        ref_def_nml = ref_data.get("def_nml", {})
+        num_ref_sources = len([k for k, v in ref_def_nml.items() if v])
+
+        # Count simulation sources
+        sim_data = config.get("sim_data", {})
+        sim_def_nml = sim_data.get("def_nml", {})
+        num_sim_sources = len([k for k, v in sim_def_nml.items() if v])
+
+        # Count metrics and scores
+        metrics = config.get("metrics", {})
+        num_metrics = len([k for k, v in metrics.items() if v])
+
+        scores = config.get("scores", {})
+        num_scores = len([k for k, v in scores.items() if v])
+
+        # Count groupby types
+        num_groupby = 0
+        if general.get("IGBP_groupby"):
+            num_groupby += 1
+        if general.get("PFT_groupby"):
+            num_groupby += 1
+        if general.get("Climate_zone_groupby"):
+            num_groupby += 1
+
+        # Count comparisons
+        comparisons = config.get("comparisons", {})
+        num_comparisons = len([k for k, v in comparisons.items() if v])
+
         # Create and start runner
         self._runner = EvaluationRunner(config_path, self)
-        self._runner.set_total_variables(len(selected))  # Set total for progress calculation
+        self._runner.set_task_counts(
+            num_variables=num_variables,
+            num_ref_sources=num_ref_sources,
+            num_sim_sources=num_sim_sources,
+            num_metrics=num_metrics,
+            num_scores=num_scores,
+            num_groupby=num_groupby,
+            num_comparisons=num_comparisons,
+            do_evaluation=general.get("evaluation", True),
+            do_comparison=general.get("comparison", False),
+            do_statistics=general.get("statistics", False)
+        )
         self._runner.progress_updated.connect(self._on_progress)
         self._runner.log_message.connect(self._on_log)
         self._runner.finished_signal.connect(self._on_finished)

@@ -129,9 +129,13 @@ class PathSelector(QWidget):
         """Get current path."""
         return self.line_edit.text()
 
-    def set_path(self, path: str):
+    def set_path(self, path: str, emit_signal: bool = True):
         """Set current path and update last directory."""
+        if not emit_signal:
+            self.line_edit.blockSignals(True)
         self.line_edit.setText(path)
+        if not emit_signal:
+            self.line_edit.blockSignals(False)
         # Update last_dir based on the path
         if path:
             # Resolve relative path

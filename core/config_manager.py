@@ -90,15 +90,17 @@ class ConfigManager:
 
         # Generate absolute paths - ref and sim are in nml folder
         nml_dir = os.path.join(output_dir, "nml")
-        if openbench_root:
-            ref_nml_path = os.path.join(nml_dir, f"ref-{basename}.yaml")
-            sim_nml_path = os.path.join(nml_dir, f"sim-{basename}.yaml")
-            stats_nml_path = os.path.join(openbench_root, "nml", "nml-yaml", "stats.yaml")
-            figure_nml_path = os.path.join(openbench_root, "nml", "nml-yaml", "figlib.yaml")
+        ref_nml_path = os.path.join(nml_dir, f"ref-{basename}.yaml")
+        sim_nml_path = os.path.join(nml_dir, f"sim-{basename}.yaml")
+
+        # stats.yaml and figlib.yaml are always in the OpenBench installation directory
+        # NOT in the project output directory - find them reliably
+        install_root = self._find_openbench_install_root(openbench_root)
+        if install_root:
+            stats_nml_path = os.path.join(install_root, "nml", "nml-yaml", "stats.yaml")
+            figure_nml_path = os.path.join(install_root, "nml", "nml-yaml", "figlib.yaml")
         else:
-            # Fallback to relative paths if no root provided
-            ref_nml_path = f"./output/{basename}/nml/ref-{basename}.yaml"
-            sim_nml_path = f"./output/{basename}/nml/sim-{basename}.yaml"
+            # Fallback to relative paths if not found
             stats_nml_path = "./nml/nml-yaml/stats.yaml"
             figure_nml_path = "./nml/nml-yaml/figlib.yaml"
 
@@ -370,8 +372,10 @@ class ConfigManager:
         # Process simulation data namelists
         sim_data = config.get("sim_data", {})
         sim_def_nml = sim_data.get("def_nml", {})
+        sim_source_configs = sim_data.get("source_configs", {})  # Get edited configs
         sim_copied, sim_model_files = self._copy_data_namelists(
-            sim_def_nml, sim_nml_dir, selected_items, openbench_root, "sim"
+            sim_def_nml, sim_nml_dir, selected_items, openbench_root, "sim",
+            sim_source_configs
         )
         copied_files.update(sim_copied)
 
@@ -390,8 +394,10 @@ class ConfigManager:
         # Process reference data namelists
         ref_data = config.get("ref_data", {})
         ref_def_nml = ref_data.get("def_nml", {})
+        ref_source_configs = ref_data.get("source_configs", {})  # Get edited configs
         ref_copied, _ = self._copy_data_namelists(
-            ref_def_nml, ref_nml_dir, selected_items, openbench_root, "ref"
+            ref_def_nml, ref_nml_dir, selected_items, openbench_root, "ref",
+            ref_source_configs
         )
         copied_files.update(ref_copied)
 
@@ -406,7 +412,8 @@ class ConfigManager:
         dest_dir: str,
         selected_items: List[str],
         openbench_root: str,
-        data_type: str
+        data_type: str,
+        source_configs: Optional[Dict[str, Any]] = None
     ) -> Tuple[Dict[str, str], Set[str]]:
         """
         Copy data source namelists with filtering.
@@ -417,6 +424,7 @@ class ConfigManager:
             selected_items: List of selected evaluation items
             openbench_root: OpenBench root directory
             data_type: "sim" or "ref"
+            source_configs: Optional dictionary of edited source configurations
 
         Returns:
             Tuple of (copied_files dict, model_definition_paths set)
@@ -424,7 +432,23 @@ class ConfigManager:
         copied_files = {}
         model_files = set()
 
+        if source_configs is None:
+            source_configs = {}
+
         for source_name, nml_path in def_nml.items():
+            dest_path = os.path.join(dest_dir, f"{source_name}.yaml")
+
+            # Check if we have edited source config - use it instead of copying from file
+            if source_name in source_configs:
+                model_path = self._write_source_config(
+                    source_configs[source_name], dest_path, selected_items, openbench_root
+                )
+                copied_files[source_name] = dest_path
+                if model_path:
+                    model_files.add(model_path)
+                continue
+
+            # No edited config - copy from original file
             if not nml_path:
                 continue
 
@@ -441,7 +465,6 @@ class ConfigManager:
                 continue
 
             # Copy with filtering
-            dest_path = os.path.join(dest_dir, f"{source_name}.yaml")
             model_path = self._copy_namelist_filtered(
                 src_path, dest_path, selected_items, openbench_root
             )
@@ -451,6 +474,79 @@ class ConfigManager:
                 model_files.add(model_path)
 
         return copied_files, model_files
+
+    def _write_source_config(
+        self,
+        source_data: Dict[str, Any],
+        dest_path: str,
+        selected_items: List[str],
+        openbench_root: str
+    ) -> Optional[str]:
+        """
+        Write edited source configuration to a namelist file.
+
+        Args:
+            source_data: The edited source configuration data
+            dest_path: Destination file path
+            selected_items: List of selected evaluation items
+            openbench_root: OpenBench root directory
+
+        Returns:
+            Model definition path if found, None otherwise
+        """
+        # Build the output structure
+        filtered = {}
+        model_path = None
+
+        # Check for general section
+        if "general" in source_data:
+            general = source_data["general"].copy()
+
+            # Convert paths to absolute
+            if "root_dir" in general and general["root_dir"]:
+                general["root_dir"] = to_absolute_path(general["root_dir"], openbench_root)
+            if "dir" in general and general["dir"]:
+                general["dir"] = to_absolute_path(general["dir"], openbench_root)
+            if "fulllist" in general and general["fulllist"]:
+                general["fulllist"] = to_absolute_path(general["fulllist"], openbench_root)
+            if "model_namelist" in general and general["model_namelist"]:
+                model_path = to_absolute_path(general["model_namelist"], openbench_root)
+                # Update to point to local nml directory
+                model_basename = os.path.splitext(os.path.basename(model_path))[0]
+                dest_dir = os.path.dirname(dest_path)
+                general["model_namelist"] = os.path.join(dest_dir, model_basename + ".yaml")
+
+            filtered["general"] = general
+
+        # Extract variable mapping fields from top level (from DataSourceEditor)
+        var_mapping_keys = ["sub_dir", "varname", "varunit", "prefix", "suffix"]
+        top_level_var_mapping = {}
+        for key in var_mapping_keys:
+            if key in source_data:
+                top_level_var_mapping[key] = source_data[key]
+
+        # Include selected evaluation items
+        for item in selected_items:
+            if item in source_data:
+                # Item already exists with its own data
+                filtered[item] = source_data[item].copy()
+            elif top_level_var_mapping:
+                # Use top-level variable mapping for this item
+                filtered[item] = top_level_var_mapping.copy()
+
+        # Write the file
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        with open(dest_path, 'w', encoding='utf-8') as f:
+            yaml.dump(
+                filtered,
+                f,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+                indent=2
+            )
+
+        return model_path
 
     def _copy_namelist_filtered(
         self,
@@ -644,6 +740,71 @@ class ConfigManager:
         ref_def_nml = ref_data.get("def_nml", {})
         for source_name in ref_def_nml:
             ref_def_nml[source_name] = os.path.join(nml_dir, "ref", f"{source_name}.yaml")
+
+    def _find_openbench_install_root(self, openbench_root: Optional[str] = None) -> Optional[str]:
+        """
+        Find the actual OpenBench installation directory.
+
+        This is distinct from the project output directory. The installation
+        directory contains openbench/openbench.py and nml/nml-yaml/stats.yaml.
+
+        Args:
+            openbench_root: A potential OpenBench root (may be output dir)
+
+        Returns:
+            Path to OpenBench installation directory, or None if not found
+        """
+        # First, try using the wizard's own location
+        # The wizard is at OpenBench/openbench_wizard/
+        wizard_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        potential_root = os.path.dirname(wizard_dir)
+
+        # Check if this looks like an OpenBench installation
+        if self._is_openbench_installation(potential_root):
+            return potential_root
+
+        # Check if provided openbench_root is actually the installation
+        if openbench_root and self._is_openbench_installation(openbench_root):
+            return openbench_root
+
+        # Search common locations
+        search_paths = [
+            os.path.expanduser("~/Desktop/OpenBench"),
+            os.path.expanduser("~/Documents/OpenBench"),
+            os.path.expanduser("~/OpenBench"),
+            "/opt/OpenBench",
+            "/usr/local/OpenBench",
+        ]
+
+        for path in search_paths:
+            if self._is_openbench_installation(path):
+                return path
+
+        # Try to find from environment variable
+        env_root = os.environ.get("OPENBENCH_ROOT")
+        if env_root and self._is_openbench_installation(env_root):
+            return env_root
+
+        return None
+
+    def _is_openbench_installation(self, path: str) -> bool:
+        """
+        Check if a path is a valid OpenBench installation directory.
+
+        Args:
+            path: Path to check
+
+        Returns:
+            True if this is a valid OpenBench installation
+        """
+        if not path or not os.path.isdir(path):
+            return False
+
+        # Check for key files that indicate an OpenBench installation
+        openbench_py = os.path.join(path, "openbench", "openbench.py")
+        stats_yaml = os.path.join(path, "nml", "nml-yaml", "stats.yaml")
+
+        return os.path.exists(openbench_py) or os.path.exists(stats_yaml)
 
     def cleanup_unused_namelists(self, config: Dict[str, Any], output_dir: str):
         """

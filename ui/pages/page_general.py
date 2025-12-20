@@ -29,12 +29,14 @@ class PageGeneral(BasePage):
 
         # Output directory first
         self.basedir_input = PathSelector(mode="directory", placeholder="Output directory")
+        self.basedir_input.path_changed.connect(self._on_basedir_changed)
         project_layout.addRow("Output Directory:", self.basedir_input)
 
         # Project name with confirm button
         name_layout = QHBoxLayout()
         self.basename_input = QLineEdit()
         self.basename_input.setPlaceholderText("Project name (e.g., Initial_test)")
+        self.basename_input.textChanged.connect(self._on_project_name_changed)
         name_layout.addWidget(self.basename_input)
 
         self.btn_confirm_name = QPushButton("Confirm")
@@ -199,6 +201,14 @@ class PageGeneral(BasePage):
         """Handle feature toggle changes."""
         self.save_to_config()
 
+    def _on_project_name_changed(self, text):
+        """Handle project name changes."""
+        self.save_to_config()
+
+    def _on_basedir_changed(self, path):
+        """Handle output directory changes."""
+        self.save_to_config()
+
     def _on_confirm_project(self):
         """Handle confirm project button click."""
         import os
@@ -242,26 +252,28 @@ class PageGeneral(BasePage):
         general = self.controller.config.get("general", {})
         basename = general.get("basename", "")
 
+        # Block signals to prevent save_to_config from being called during load
+        self.basename_input.blockSignals(True)
         self.basename_input.setText(basename)
+        self.basename_input.blockSignals(False)
 
-        # Get basedir and convert to absolute path with project name
+        # Get basedir and convert to absolute path (without appending project name)
         basedir = general.get("basedir", "")
 
         # Find OpenBench root directory
         openbench_root = self._get_openbench_root()
 
-        if not basedir or basedir.startswith("./output") or basedir == "./output":
-            # Set default to OpenBench/output/project_name
+        if not basedir or basedir == "./output":
+            # Set default to OpenBench/output (without project name)
             basedir = os.path.join(openbench_root, "output")
-            if basename:
-                basedir = os.path.join(basedir, basename)
         elif not os.path.isabs(basedir):
             # Convert relative path to absolute
             if basedir.startswith("./"):
                 basedir = basedir[2:]
             basedir = os.path.normpath(os.path.join(openbench_root, basedir))
 
-        self.basedir_input.set_path(basedir)
+        # Set path without emitting signal to prevent save_to_config loop
+        self.basedir_input.set_path(basedir, emit_signal=False)
 
         self.syear_spin.setValue(general.get("syear", 2000))
         self.eyear_spin.setValue(general.get("eyear", 2020))
