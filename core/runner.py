@@ -46,9 +46,30 @@ class EvaluationRunner(QThread):
         self.config_path = config_path
         self._stop_requested = False
         self._process: Optional[subprocess.Popen] = None
-        self._total_variables = 0
-        self._completed_variables = set()
+
+        # Progress tracking
+        self._total_tasks = 0
+        self._completed_tasks = 0
         self._current_variable = ""
+        self._current_ref = ""
+        self._current_sim = ""
+
+        # Task counts for detailed progress
+        self._num_variables = 0
+        self._num_ref_sources = 0
+        self._num_sim_sources = 0
+        self._num_metrics = 0
+        self._num_scores = 0
+        self._num_groupby = 0  # IGBP, PFT, Climate zone
+        self._num_comparisons = 0
+        self._do_evaluation = True
+        self._do_comparison = False
+        self._do_statistics = False
+
+        # Track completed items to avoid double counting
+        self._completed_eval_tasks = set()  # (var, ref, sim) tuples
+        self._completed_groupby_tasks = set()  # (var, groupby_type) tuples
+        self._completed_comparison_tasks = set()  # comparison names
 
     def run(self):
         """Run the evaluation."""
@@ -98,6 +119,8 @@ class EvaluationRunner(QThread):
 
             # Force UTF-8 encoding for Python subprocess (fixes Unicode errors on Windows)
             env['PYTHONIOENCODING'] = 'utf-8'
+            # Disable output buffering to ensure real-time log display
+            env['PYTHONUNBUFFERED'] = '1'
 
             self._process = subprocess.Popen(
                 cmd,
@@ -111,7 +134,7 @@ class EvaluationRunner(QThread):
                 errors='replace'  # Replace unencodable characters instead of raising error
             )
 
-            # Read output
+            # Read output in real-time
             progress = 0
             while True:
                 if self._stop_requested:
@@ -125,11 +148,15 @@ class EvaluationRunner(QThread):
                     return
 
                 line = self._process.stdout.readline()
-                if not line and self._process.poll() is not None:
-                    break
+                if not line:
+                    # No more output - check if process is still running
+                    if self._process.poll() is not None:
+                        break
+                    # Process still running, just no output yet - continue
+                    continue
 
+                line = line.strip()
                 if line:
-                    line = line.strip()
                     self.log_message.emit(line)
 
                     # Parse progress from log
@@ -142,6 +169,15 @@ class EvaluationRunner(QThread):
                         stage,
                         line
                     )
+
+            # Read any remaining buffered output after process terminates
+            remaining_output = self._process.stdout.read()
+            if remaining_output:
+                for line in remaining_output.strip().split('\n'):
+                    line = line.strip()
+                    if line:
+                        self.log_message.emit(line)
+                        progress, var, stage = self._parse_progress(line, progress)
 
             # Check result
             return_code = self._process.wait()
@@ -313,61 +349,168 @@ class EvaluationRunner(QThread):
         return None
 
     def _parse_progress(self, line: str, current_progress: float) -> tuple:
-        """Parse progress from log line."""
+        """Parse progress from log line with detailed task tracking."""
         var = self._current_variable
         stage = ""
 
         line_lower = line.lower()
 
         # Detect variable being processed
-        # Common patterns: "Processing Variable_Name", "Evaluating Variable_Name"
-        # Or: "Variable_Name: starting evaluation"
+        # Patterns: "Processing Variable_Name", "Evaluating Variable_Name"
         if "processing" in line_lower or "evaluating" in line_lower:
-            # Try to extract variable name
             for keyword in ["Processing", "Evaluating", "processing", "evaluating"]:
                 if keyword in line:
                     parts = line.split(keyword)
                     if len(parts) > 1:
-                        # Get the first word after the keyword
                         remaining = parts[1].strip()
                         if remaining:
-                            # Handle patterns like "Processing Gross_Primary_Productivity..."
                             var_name = remaining.split()[0].strip('.:,')
-                            if var_name and len(var_name) > 2:  # Filter out short fragments
+                            if var_name and len(var_name) > 2:
                                 self._current_variable = var_name
                                 var = var_name
                         break
 
+        # Detect reference/simulation source being processed
+        # Patterns: "ref_source: FLUXNET", "sim_source: CLM5"
+        if "ref_source" in line_lower or "reference" in line_lower:
+            parts = line.split(":")
+            if len(parts) > 1:
+                self._current_ref = parts[-1].strip().split()[0] if parts[-1].strip() else ""
+        if "sim_source" in line_lower or "simulation" in line_lower:
+            parts = line.split(":")
+            if len(parts) > 1:
+                self._current_sim = parts[-1].strip().split()[0] if parts[-1].strip() else ""
+
         # Detect stage
         if "evaluation" in line_lower and "item" not in line_lower:
             stage = "Evaluation"
-        elif "comparison" in line_lower:
+        elif "comparison" in line_lower or "groupby" in line_lower:
             stage = "Comparison"
         elif "statistic" in line_lower:
             stage = "Statistics"
 
-        # Detect completion of a variable
-        # Patterns: "Gross_Primary_Productivity completed", "finished processing X"
-        if ("completed" in line_lower or "finished" in line_lower or "done" in line_lower):
-            if self._current_variable and self._current_variable not in self._completed_variables:
-                self._completed_variables.add(self._current_variable)
+        # Detect task completions
+        task_completed = False
 
-        # Calculate progress based on completed variables
-        if self._total_variables > 0:
+        # Evaluation task completion
+        # Patterns: "Evaluation completed for X", "finished evaluating X"
+        if stage == "Evaluation" and ("completed" in line_lower or "finished" in line_lower or "done" in line_lower):
+            task_key = (self._current_variable, self._current_ref, self._current_sim)
+            if task_key not in self._completed_eval_tasks and self._current_variable:
+                self._completed_eval_tasks.add(task_key)
+                task_completed = True
+
+        # Groupby task completion
+        # Patterns: "IGBP groupby completed", "PFT analysis done"
+        for groupby_type in ["igbp", "pft", "climate", "landcover"]:
+            if groupby_type in line_lower and ("completed" in line_lower or "finished" in line_lower or "done" in line_lower):
+                task_key = (self._current_variable, groupby_type)
+                if task_key not in self._completed_groupby_tasks:
+                    self._completed_groupby_tasks.add(task_key)
+                    task_completed = True
+
+        # Comparison/Statistics task completion
+        if stage == "Statistics" and ("completed" in line_lower or "finished" in line_lower):
+            # Try to extract comparison name
+            comp_name = self._current_variable or "comparison"
+            if comp_name not in self._completed_comparison_tasks:
+                self._completed_comparison_tasks.add(comp_name)
+                task_completed = True
+
+        # Calculate progress
+        if self._total_tasks > 0:
+            # Count completed tasks from all categories
+            total_completed = (
+                len(self._completed_eval_tasks) +
+                len(self._completed_groupby_tasks) +
+                len(self._completed_comparison_tasks)
+            )
             # Reserve 5% for initialization, 5% for finalization
-            variable_progress = (len(self._completed_variables) / self._total_variables) * 90
+            task_progress = (total_completed / self._total_tasks) * 90
+            current_progress = min(5 + task_progress, 95)
+        elif self._num_variables > 0:
+            # Fallback to simple variable counting
+            completed_vars = len(set(t[0] for t in self._completed_eval_tasks if t[0]))
+            variable_progress = (completed_vars / self._num_variables) * 90
             current_progress = min(5 + variable_progress, 95)
         else:
-            # Fallback: slow increment
-            if stage or "complete" in line_lower:
+            # Last resort: slow increment
+            if task_completed or stage or "complete" in line_lower:
                 current_progress = min(current_progress + 0.5, 95)
 
         return current_progress, var, stage
 
     def set_total_variables(self, count: int):
-        """Set the total number of variables to process."""
-        self._total_variables = count
-        self._completed_variables = set()
+        """Set the total number of variables to process (legacy method)."""
+        self._num_variables = count
+
+    def set_task_counts(
+        self,
+        num_variables: int,
+        num_ref_sources: int,
+        num_sim_sources: int,
+        num_metrics: int,
+        num_scores: int,
+        num_groupby: int,
+        num_comparisons: int,
+        do_evaluation: bool = True,
+        do_comparison: bool = False,
+        do_statistics: bool = False
+    ):
+        """
+        Set detailed task counts for accurate progress calculation.
+
+        Total tasks formula:
+        - Evaluation: variables × ref_sources × sim_sources
+        - Groupby: variables × groupby_count × (metrics + scores)
+        - Comparisons: num_comparisons
+
+        Args:
+            num_variables: Number of evaluation variables (e.g., GPP, ET, etc.)
+            num_ref_sources: Number of reference data sources
+            num_sim_sources: Number of simulation data sources
+            num_metrics: Number of metrics (RMSE, bias, etc.)
+            num_scores: Number of scores
+            num_groupby: Number of groupby types (IGBP, PFT, Climate zone)
+            num_comparisons: Number of comparison tasks
+            do_evaluation: Whether evaluation is enabled
+            do_comparison: Whether comparison is enabled
+            do_statistics: Whether statistics is enabled
+        """
+        self._num_variables = num_variables
+        self._num_ref_sources = max(1, num_ref_sources)
+        self._num_sim_sources = max(1, num_sim_sources)
+        self._num_metrics = num_metrics
+        self._num_scores = num_scores
+        self._num_groupby = num_groupby
+        self._num_comparisons = num_comparisons
+        self._do_evaluation = do_evaluation
+        self._do_comparison = do_comparison
+        self._do_statistics = do_statistics
+
+        # Calculate total tasks
+        self._total_tasks = 0
+
+        if do_evaluation:
+            # Each variable × each ref source × each sim source
+            self._total_tasks += num_variables * self._num_ref_sources * self._num_sim_sources
+
+        if do_comparison and num_groupby > 0:
+            # Each variable × each groupby × (metrics + scores)
+            metric_score_count = max(1, num_metrics + num_scores)
+            self._total_tasks += num_variables * num_groupby * metric_score_count
+
+        if do_statistics and num_comparisons > 0:
+            self._total_tasks += num_comparisons
+
+        # Ensure at least 1 task
+        self._total_tasks = max(1, self._total_tasks)
+
+        # Reset completion tracking
+        self._completed_tasks = 0
+        self._completed_eval_tasks = set()
+        self._completed_groupby_tasks = set()
+        self._completed_comparison_tasks = set()
 
     def _emit_progress(
         self,
