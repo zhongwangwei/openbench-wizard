@@ -4,6 +4,7 @@ OpenBench evaluation runner with progress tracking.
 """
 
 import os
+import re
 import sys
 import subprocess
 import threading
@@ -371,15 +372,27 @@ class EvaluationRunner(QThread):
                         break
 
         # Detect reference/simulation source being processed
-        # Patterns: "ref_source: FLUXNET", "sim_source: CLM5"
-        if "ref_source" in line_lower or "reference" in line_lower:
-            parts = line.split(":")
-            if len(parts) > 1:
-                self._current_ref = parts[-1].strip().split()[0] if parts[-1].strip() else ""
-        if "sim_source" in line_lower or "simulation" in line_lower:
-            parts = line.split(":")
-            if len(parts) > 1:
-                self._current_sim = parts[-1].strip().split()[0] if parts[-1].strip() else ""
+        # Patterns: "ref_source: FLUXNET", "ref: FLUXNET", "sim_source: CLM5", "sim: 01_case"
+        if "ref_source" in line_lower or "reference" in line_lower or " ref:" in line_lower or "- ref:" in line_lower:
+            # Try to extract ref source from patterns like "- ref: SOURCE_NAME"
+            if " ref:" in line or "- ref:" in line:
+                match = re.search(r'[-\s]ref:\s*(\S+)', line)
+                if match:
+                    self._current_ref = match.group(1).strip(',:')
+            else:
+                parts = line.split(":")
+                if len(parts) > 1:
+                    self._current_ref = parts[-1].strip().split()[0] if parts[-1].strip() else ""
+        if "sim_source" in line_lower or "simulation" in line_lower or " sim:" in line_lower or "- sim:" in line_lower:
+            # Try to extract sim source from patterns like "- sim: SOURCE_NAME"
+            if " sim:" in line or "- sim:" in line:
+                match = re.search(r'[-\s]sim:\s*(\S+)', line)
+                if match:
+                    self._current_sim = match.group(1).strip(',:')
+            else:
+                parts = line.split(":")
+                if len(parts) > 1:
+                    self._current_sim = parts[-1].strip().split()[0] if parts[-1].strip() else ""
 
         # Detect stage
         if "evaluation" in line_lower and "item" not in line_lower:

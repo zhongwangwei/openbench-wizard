@@ -241,13 +241,19 @@ class WizardController(QObject):
         self._auto_sync_enabled = value
 
     def get_output_dir(self) -> str:
-        """Get the output directory path: {basedir}/{basename}/"""
+        """Get the output directory path.
+
+        Returns basedir/basename, avoiding duplication if basedir already ends with basename.
+        """
         general = self._config.get("general", {})
         basedir = general.get("basedir", "")
         basename = general.get("basename", "config")
 
         if basedir and os.path.isabs(basedir):
-            # basedir is absolute, append basename as subdirectory
+            # Check if basedir already ends with basename to avoid duplication
+            if os.path.basename(basedir.rstrip(os.sep)) == basename:
+                return basedir
+            # Append basename to basedir
             return os.path.join(basedir, basename)
         # Use project root to construct output path
         openbench_root = self._project_root or get_openbench_root()
