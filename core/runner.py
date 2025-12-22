@@ -38,6 +38,12 @@ class RunnerProgress:
 class EvaluationRunner(QThread):
     """Thread for running OpenBench evaluation."""
 
+    # Progress calculation constants
+    PROGRESS_INIT = 5       # Reserve 5% for initialization
+    PROGRESS_WORK = 90      # 90% for actual work (5% to 95%)
+    PROGRESS_MAX = 95       # Cap at 95% until completion confirmed
+    PROGRESS_INCREMENT = 0.5  # Slow increment when no task info available
+
     progress_updated = Signal(object)  # RunnerProgress
     log_message = Signal(str)
     finished_signal = Signal(bool, str)  # success, message
@@ -46,6 +52,7 @@ class EvaluationRunner(QThread):
         super().__init__(parent)
         self.config_path = config_path
         self._stop_requested = False
+        self._stop_lock = threading.Lock()  # Lock for thread-safe stop flag access
         self._process: Optional[subprocess.Popen] = None
 
         # Progress tracking
@@ -72,6 +79,19 @@ class EvaluationRunner(QThread):
         self._completed_groupby_tasks = set()  # (var, groupby_type) tuples
         self._completed_comparison_tasks = set()  # comparison names
 
+    def __del__(self):
+        """Cleanup subprocess on thread destruction to prevent orphaned processes."""
+        self._cleanup_process()
+
+    def _cleanup_process(self):
+        """Safely cleanup the subprocess."""
+        if self._process is not None:
+            try:
+                if self._process.poll() is None:  # Process still running
+                    self._kill_process_tree()
+            except Exception:
+                pass  # Ignore errors during cleanup
+
     def run(self):
         """Run the evaluation."""
         try:
@@ -90,7 +110,15 @@ class EvaluationRunner(QThread):
             openbench_path = self._find_openbench_script()
 
             if not openbench_path:
-                self.finished_signal.emit(False, "Could not find OpenBench script")
+                error_msg = (
+                    "Could not find OpenBench script (openbench/openbench.py).\n\n"
+                    "Please ensure OpenBench is installed in one of these locations:\n"
+                    "• ~/Desktop/OpenBench/\n"
+                    "• ~/Documents/OpenBench/\n"
+                    "• ~/OpenBench/\n"
+                    "• Or set the path in Run Monitor page"
+                )
+                self.finished_signal.emit(False, error_msg)
                 return
 
             # Find Python interpreter (not the bundled executable)
@@ -137,8 +165,18 @@ class EvaluationRunner(QThread):
 
             # Read output in real-time
             progress = 0
+
+            # Verify process started successfully
+            if self._process is None or self._process.stdout is None:
+                self.finished_signal.emit(False, "Failed to start OpenBench process")
+                return
+
             while True:
-                if self._stop_requested:
+                # Thread-safe check for stop request
+                with self._stop_lock:
+                    stop_requested = self._stop_requested
+
+                if stop_requested:
                     # Kill the process and all children
                     self._kill_process_tree()
                     self._emit_progress(
@@ -331,17 +369,17 @@ class EvaluationRunner(QThread):
         """Save OpenBench directory path for future use."""
         try:
             config_file = self._get_config_file_path()
-            with open(config_file, 'w') as f:
+            with open(config_file, 'w', encoding='utf-8') as f:
                 f.write(path)
-        except Exception:
-            pass
+        except Exception as e:
+            self.log_message.emit(f"Warning: Could not save OpenBench path: {e}")
 
     def _load_openbench_path(self) -> Optional[str]:
         """Load saved OpenBench directory path."""
         try:
             config_file = self._get_config_file_path()
             if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
+                with open(config_file, 'r', encoding='utf-8') as f:
                     path = f.read().strip()
                     if os.path.exists(path):
                         return path
@@ -399,6 +437,16 @@ class EvaluationRunner(QThread):
             stage = "Evaluation"
         elif "comparison" in line_lower or "groupby" in line_lower:
             stage = "Comparison"
+            # Track comparison task progress
+            # Pattern: "Processing X comparison" starts a comparison
+            # Pattern: "Done running X comparison" completes a comparison
+            if "done running" in line_lower and "comparison" in line_lower:
+                # Extract comparison name from "Done running X comparison"
+                match = re.search(r'done running\s+(\w+)\s+comparison', line_lower)
+                if match:
+                    comp_name = match.group(1)
+                    if comp_name not in self._completed_comparison_tasks:
+                        self._completed_comparison_tasks.add(comp_name)
         elif "statistic" in line_lower:
             stage = "Statistics"
 
@@ -430,7 +478,7 @@ class EvaluationRunner(QThread):
                 self._completed_comparison_tasks.add(comp_name)
                 task_completed = True
 
-        # Calculate progress
+        # Calculate progress using class constants
         if self._total_tasks > 0:
             # Count completed tasks from all categories
             total_completed = (
@@ -438,18 +486,26 @@ class EvaluationRunner(QThread):
                 len(self._completed_groupby_tasks) +
                 len(self._completed_comparison_tasks)
             )
-            # Reserve 5% for initialization, 5% for finalization
-            task_progress = (total_completed / self._total_tasks) * 90
-            current_progress = min(5 + task_progress, 95)
+            # Use max(1, ...) for extra safety against division by zero
+            task_progress = (total_completed / max(1, self._total_tasks)) * self.PROGRESS_WORK
+            current_progress = min(self.PROGRESS_INIT + task_progress, self.PROGRESS_MAX)
+        elif self._num_comparisons > 0 and len(self._completed_comparison_tasks) > 0:
+            # Fallback for comparison phase
+            comparison_progress = (len(self._completed_comparison_tasks) / max(1, self._num_comparisons)) * self.PROGRESS_WORK
+            current_progress = min(self.PROGRESS_INIT + comparison_progress, self.PROGRESS_MAX)
         elif self._num_variables > 0:
             # Fallback to simple variable counting
             completed_vars = len(set(t[0] for t in self._completed_eval_tasks if t[0]))
-            variable_progress = (completed_vars / self._num_variables) * 90
-            current_progress = min(5 + variable_progress, 95)
+            # Use max(1, ...) for extra safety against division by zero
+            variable_progress = (completed_vars / max(1, self._num_variables)) * self.PROGRESS_WORK
+            current_progress = min(self.PROGRESS_INIT + variable_progress, self.PROGRESS_MAX)
         else:
-            # Last resort: slow increment
-            if task_completed or stage or "complete" in line_lower:
-                current_progress = min(current_progress + 0.5, 95)
+            # Last resort: increment based on activity
+            if task_completed or stage or "complete" in line_lower or "done" in line_lower:
+                current_progress = min(current_progress + self.PROGRESS_INCREMENT * 2, self.PROGRESS_MAX)
+            # Slow increment during comparison phase to show activity
+            elif stage == "Comparison":
+                current_progress = min(current_progress + self.PROGRESS_INCREMENT, self.PROGRESS_MAX)
 
         return current_progress, var, stage
 
@@ -508,10 +564,14 @@ class EvaluationRunner(QThread):
             # Each variable × each ref source × each sim source
             self._total_tasks += num_variables * self._num_ref_sources * self._num_sim_sources
 
-        if do_comparison and num_groupby > 0:
-            # Each variable × each groupby × (metrics + scores)
-            metric_score_count = max(1, num_metrics + num_scores)
-            self._total_tasks += num_variables * num_groupby * metric_score_count
+        if do_comparison:
+            # Each comparison type is one task
+            if num_comparisons > 0:
+                self._total_tasks += num_comparisons
+            # Also count groupby tasks if enabled
+            if num_groupby > 0:
+                metric_score_count = max(1, num_metrics + num_scores)
+                self._total_tasks += num_variables * num_groupby * metric_score_count
 
         if do_statistics and num_comparisons > 0:
             self._total_tasks += num_comparisons
@@ -576,6 +636,7 @@ class EvaluationRunner(QThread):
                 pass
 
     def stop(self):
-        """Request stop."""
-        self._stop_requested = True
+        """Request stop (thread-safe)."""
+        with self._stop_lock:
+            self._stop_requested = True
         self._kill_process_tree()

@@ -202,20 +202,51 @@ class PageGeneral(BasePage):
         self.save_to_config()
 
     def _on_project_name_changed(self, text):
-        """Handle project name changes."""
-        self.save_to_config()
+        """Handle project name changes.
+
+        Note: Only saves to config without triggering sync_namelists.
+        Directory creation happens only when Confirm button is clicked.
+        """
+        self._save_to_config_no_sync()
 
     def _on_basedir_changed(self, path):
-        """Handle output directory changes."""
-        self.save_to_config()
+        """Handle output directory changes.
+
+        Note: Only saves to config without triggering sync_namelists.
+        Directory creation happens only when Confirm button is clicked.
+        """
+        self._save_to_config_no_sync()
 
     def _on_confirm_project(self):
         """Handle confirm project button click."""
         import os
+        import re
 
         basename = self.basename_input.text().strip()
         if not basename:
             QMessageBox.warning(self, "Error", "Please enter a project name.")
+            return
+
+        # Validate filesystem-safe characters
+        # Allow letters, numbers, underscores, hyphens, and dots
+        if not re.match(r'^[a-zA-Z0-9_.-]+$', basename):
+            QMessageBox.warning(
+                self, "Invalid Name",
+                "Project name can only contain:\n"
+                "• Letters (a-z, A-Z)\n"
+                "• Numbers (0-9)\n"
+                "• Underscores (_)\n"
+                "• Hyphens (-)\n"
+                "• Dots (.)"
+            )
+            return
+
+        # Check for reserved names on Windows
+        reserved_names = {'CON', 'PRN', 'AUX', 'NUL',
+                         'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+                         'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'}
+        if basename.upper() in reserved_names:
+            QMessageBox.warning(self, "Invalid Name", f"'{basename}' is a reserved system name.")
             return
 
         # Check if output directory is set
@@ -318,14 +349,13 @@ class PageGeneral(BasePage):
         if idx >= 0:
             self.weight_combo.setCurrentIndex(idx)
 
-    def save_to_config(self):
-        """Save settings to controller config."""
-        import os
+    def _save_to_config_no_sync(self):
+        """Save settings to controller config WITHOUT triggering sync_namelists.
 
-        # Check if basename or basedir changed (affects output directory)
-        old_general = self.controller.config.get("general", {})
-        old_basename = old_general.get("basename", "")
-        old_basedir = old_general.get("basedir", "")
+        Used for intermediate saves (like typing project name) where we don't
+        want to create directories yet.
+        """
+        import os
 
         new_basename = self.basename_input.text().strip()
         new_basedir = self.basedir_input.path().strip()
@@ -363,6 +393,21 @@ class PageGeneral(BasePage):
             "weight": self.weight_combo.currentText().lower(),
         }
         self.controller.update_section("general", general)
+
+    def save_to_config(self):
+        """Save settings to controller config."""
+        import os
+
+        # Check if basename or basedir changed (affects output directory)
+        old_general = self.controller.config.get("general", {})
+        old_basename = old_general.get("basename", "")
+        old_basedir = old_general.get("basedir", "")
+
+        # Save config first
+        self._save_to_config_no_sync()
+
+        new_basename = self.basename_input.text().strip()
+        new_basedir = self.basedir_input.path().strip()
 
         # Trigger namelist sync if output location changed
         if new_basename != old_basename or new_basedir != old_basedir:

@@ -82,20 +82,22 @@ class ConfigManager:
         if output_dir is None:
             basedir = general.get("basedir", "")
             if basedir and os.path.isabs(basedir):
+                # Normalize path to handle trailing slashes and multiple separators
+                normalized_basedir = os.path.normpath(basedir)
                 # Check if basedir already ends with basename to avoid duplication
-                if os.path.basename(basedir.rstrip(os.sep)) == basename:
-                    output_dir = basedir
+                if os.path.basename(normalized_basedir) == basename:
+                    output_dir = normalized_basedir
                 else:
-                    output_dir = os.path.join(basedir, basename)
+                    output_dir = os.path.normpath(os.path.join(normalized_basedir, basename))
             elif openbench_root:
-                output_dir = os.path.join(openbench_root, "output", basename)
+                output_dir = os.path.normpath(os.path.join(openbench_root, "output", basename))
             else:
-                output_dir = general.get("basedir", "./output")
+                output_dir = os.path.normpath(general.get("basedir", "./output"))
 
         # Generate absolute paths - ref and sim are in nml folder
-        nml_dir = os.path.join(output_dir, "nml")
-        ref_nml_path = os.path.join(nml_dir, f"ref-{basename}.yaml")
-        sim_nml_path = os.path.join(nml_dir, f"sim-{basename}.yaml")
+        nml_dir = os.path.normpath(os.path.join(output_dir, "nml"))
+        ref_nml_path = os.path.normpath(os.path.join(nml_dir, f"ref-{basename}.yaml"))
+        sim_nml_path = os.path.normpath(os.path.join(nml_dir, f"sim-{basename}.yaml"))
 
         # stats.yaml and figlib.yaml are always in the OpenBench installation directory
         # NOT in the project output directory - find them reliably
@@ -433,6 +435,7 @@ class ConfigManager:
             openbench_root: OpenBench root directory
             data_type: "sim" or "ref"
             source_configs: Optional dictionary of edited source configurations
+                           For ref data, keys are compound: "var_name::source_name"
 
         Returns:
             Tuple of (copied_files dict, model_definition_paths set)
@@ -443,13 +446,37 @@ class ConfigManager:
         if source_configs is None:
             source_configs = {}
 
+        # For ref data, reorganize source_configs by source_name with per-variable configs
+        # source_configs uses compound key "var_name::source_name"
+        organized_configs = {}  # {source_name: {"_general": {...}, var_name: {...}}}
+
+        for key, config in source_configs.items():
+            if "::" in key:
+                # Compound key format: "var_name::source_name"
+                var_name, source_name = key.split("::", 1)
+                if source_name not in organized_configs:
+                    organized_configs[source_name] = {}
+                # Store general section (shared)
+                if "general" in config:
+                    organized_configs[source_name]["_general"] = config["general"]
+                # Store var-specific config
+                var_config = {}
+                for field in ["sub_dir", "varname", "varunit", "prefix", "suffix"]:
+                    if field in config:
+                        var_config[field] = config[field]
+                if var_config:
+                    organized_configs[source_name][var_name] = var_config
+            else:
+                # Legacy format - source_name directly
+                organized_configs[key] = {"_legacy": config}
+
         for source_name, nml_path in def_nml.items():
             dest_path = os.path.join(dest_dir, f"{source_name}.yaml")
 
             # Check if we have edited source config - use it instead of copying from file
-            if source_name in source_configs:
-                model_path = self._write_source_config(
-                    source_configs[source_name], dest_path, selected_items, openbench_root
+            if source_name in organized_configs:
+                model_path = self._write_source_config_organized(
+                    organized_configs[source_name], dest_path, selected_items, openbench_root, data_type
                 )
                 copied_files[source_name] = dest_path
                 if model_path:
@@ -492,6 +519,7 @@ class ConfigManager:
     ) -> Optional[str]:
         """
         Write edited source configuration to a namelist file.
+        (Legacy method - kept for backward compatibility)
 
         Args:
             source_data: The edited source configuration data
@@ -541,6 +569,79 @@ class ConfigManager:
             elif top_level_var_mapping:
                 # Use top-level variable mapping for this item
                 filtered[item] = top_level_var_mapping.copy()
+
+        # Write the file
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        with open(dest_path, 'w', encoding='utf-8') as f:
+            yaml.dump(
+                filtered,
+                f,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+                indent=2
+            )
+
+        return model_path
+
+    def _write_source_config_organized(
+        self,
+        organized_data: Dict[str, Any],
+        dest_path: str,
+        selected_items: List[str],
+        openbench_root: str,
+        data_type: str
+    ) -> Optional[str]:
+        """
+        Write organized source configuration to a namelist file.
+        Handles per-variable configurations properly.
+
+        Args:
+            organized_data: Dictionary with structure:
+                           {"_general": {...}, "var_name1": {...}, "var_name2": {...}}
+                           or {"_legacy": {...}} for old format
+            dest_path: Destination file path
+            selected_items: List of selected evaluation items
+            openbench_root: OpenBench root directory
+            data_type: "sim" or "ref"
+
+        Returns:
+            Model definition path if found, None otherwise
+        """
+        # Handle legacy format
+        if "_legacy" in organized_data:
+            return self._write_source_config(
+                organized_data["_legacy"], dest_path, selected_items, openbench_root
+            )
+
+        filtered = {}
+        model_path = None
+
+        # Process general section
+        if "_general" in organized_data:
+            general = organized_data["_general"].copy()
+
+            # Convert paths to absolute
+            if "root_dir" in general and general["root_dir"]:
+                general["root_dir"] = to_absolute_path(general["root_dir"], openbench_root)
+            if "dir" in general and general["dir"]:
+                general["dir"] = to_absolute_path(general["dir"], openbench_root)
+            if "fulllist" in general and general["fulllist"]:
+                general["fulllist"] = to_absolute_path(general["fulllist"], openbench_root)
+            if "model_namelist" in general and general["model_namelist"]:
+                model_path = to_absolute_path(general["model_namelist"], openbench_root)
+                # Update to point to local nml directory
+                model_basename = os.path.splitext(os.path.basename(model_path))[0]
+                dest_dir = os.path.dirname(dest_path)
+                general["model_namelist"] = os.path.join(dest_dir, model_basename + ".yaml")
+
+            filtered["general"] = general
+
+        # Process per-variable configurations
+        for item in selected_items:
+            if item in organized_data:
+                # Use the specific config for this variable
+                filtered[item] = organized_data[item].copy()
 
         # Write the file
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)

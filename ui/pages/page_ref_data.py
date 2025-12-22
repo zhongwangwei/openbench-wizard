@@ -1,6 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 Reference Data configuration page.
+
+Data structure for _source_configs:
+    _source_configs[var_name][source_name] = {
+        "general": {...},           # Shared settings (root_dir, data_type, etc.)
+        "var_config": {...},        # Variable-specific settings (sub_dir, varname, prefix, suffix, varunit)
+    }
+
+This allows the same source (e.g., GLEAM_v4.2a) to be used by multiple variables
+with different per-variable configurations.
 """
 
 from typing import Dict, Any, List
@@ -23,6 +32,7 @@ class PageRefData(BasePage):
     PAGE_ID = "ref_data"
     PAGE_TITLE = "Reference Data"
     PAGE_SUBTITLE = "Configure reference data sources for each evaluation variable"
+    CONTENT_EXPAND = True  # Allow content to fill available space
 
     def _setup_content(self):
         """Setup page content."""
@@ -36,6 +46,7 @@ class PageRefData(BasePage):
 
         # Store references to source lists
         self._source_lists: Dict[str, QListWidget] = {}
+        # Structure: _source_configs[var_name][source_name] = {"general": {...}, "var_config": {...}}
         self._source_configs: Dict[str, Dict[str, Any]] = {}
 
     def _rebuild_variable_groups(self):
@@ -63,12 +74,12 @@ class PageRefData(BasePage):
             group = QGroupBox(var_name.replace("_", " "))
             group_layout = QVBoxLayout(group)
 
-            # Source list
+            # Source list - use minimum height instead of maximum for better space usage
             source_list = QListWidget()
-            source_list.setMaximumHeight(100)
+            source_list.setMinimumHeight(60)
             source_list.setProperty("var_name", var_name)
             self._source_lists[var_name] = source_list
-            group_layout.addWidget(source_list)
+            group_layout.addWidget(source_list, 1)  # stretch factor 1 to expand
 
             # Buttons
             btn_layout = QHBoxLayout()
@@ -77,6 +88,12 @@ class PageRefData(BasePage):
             btn_add.setProperty("secondary", True)
             btn_add.clicked.connect(lambda checked, v=var_name: self._add_source(v))
             btn_layout.addWidget(btn_add)
+
+            btn_copy = QPushButton("Copy")
+            btn_copy.setProperty("secondary", True)
+            btn_copy.setToolTip("Copy selected source as a new source")
+            btn_copy.clicked.connect(lambda checked, v=var_name: self._copy_source(v))
+            btn_layout.addWidget(btn_copy)
 
             btn_edit = QPushButton("Edit")
             btn_edit.setProperty("secondary", True)
@@ -91,19 +108,66 @@ class PageRefData(BasePage):
             btn_layout.addStretch()
             group_layout.addLayout(btn_layout)
 
-            self.var_layout.addWidget(group)
+            self.var_layout.addWidget(group, 1)  # stretch factor 1 to expand
 
-        self.var_layout.addStretch()
+        # No addStretch() here - let groups expand to fill space
 
     def _add_source(self, var_name: str):
         """Add new data source for variable."""
-        dialog = DataSourceEditor(source_type="ref", parent=self)
+        dialog = DataSourceEditor(
+            source_type="ref",
+            var_name=var_name,  # Pass variable name for context
+            parent=self
+        )
         if dialog.exec():
             source_name = dialog.get_source_name()
             if source_name:
                 if var_name not in self._source_configs:
                     self._source_configs[var_name] = {}
                 self._source_configs[var_name][source_name] = dialog.get_data()
+                self._update_source_list(var_name)
+                self.save_to_config()
+
+    def _copy_source(self, var_name: str):
+        """Copy selected data source as a new source."""
+        import copy
+
+        source_list = self._source_lists.get(var_name)
+        if not source_list:
+            return
+
+        current = source_list.currentItem()
+        if not current:
+            QMessageBox.information(self, "Info", "Please select a source to copy.")
+            return
+
+        source_name = current.text()
+        existing_data = self._source_configs.get(var_name, {}).get(source_name, {})
+
+        # Deep copy the data to avoid modifying the original
+        copied_data = copy.deepcopy(existing_data)
+        # Remove def_nml_path so a new one will be generated
+        copied_data.pop("def_nml_path", None)
+
+        # Open dialog with copied data but no source name (user must enter new name)
+        dialog = DataSourceEditor(
+            source_type="ref",
+            var_name=var_name,
+            initial_data=copied_data,
+            parent=self
+        )
+        if dialog.exec():
+            new_source_name = dialog.get_source_name()
+            if new_source_name:
+                if new_source_name == source_name:
+                    QMessageBox.warning(
+                        self, "Error",
+                        "New source name must be different from the original."
+                    )
+                    return
+                if var_name not in self._source_configs:
+                    self._source_configs[var_name] = {}
+                self._source_configs[var_name][new_source_name] = dialog.get_data()
                 self._update_source_list(var_name)
                 self.save_to_config()
 
@@ -124,6 +188,7 @@ class PageRefData(BasePage):
         dialog = DataSourceEditor(
             source_name=source_name,
             source_type="ref",
+            var_name=var_name,  # Pass variable name for context
             initial_data=existing_data,
             parent=self
         )
@@ -166,7 +231,11 @@ class PageRefData(BasePage):
             source_list.addItem(source_name)
 
     def load_from_config(self):
-        """Load from config."""
+        """Load from config.
+
+        Properly loads per-variable configurations from source files.
+        Each variable gets its own copy of the config with variable-specific settings.
+        """
         import os
         import yaml
 
@@ -175,7 +244,8 @@ class PageRefData(BasePage):
         ref_data = self.controller.config.get("ref_data", {})
         general = ref_data.get("general", {})
         def_nml = ref_data.get("def_nml", {})
-        saved_source_configs = ref_data.get("source_configs", {})  # Get saved configs
+        # saved_source_configs now uses compound key: "var_name::source_name"
+        saved_source_configs = ref_data.get("source_configs", {})
 
         # Parse existing config into source configs
         eval_items = self.controller.config.get("evaluation_items", {})
@@ -189,9 +259,12 @@ class PageRefData(BasePage):
 
             self._source_configs[var_name] = {}
             for source_name in sources:
+                # Use compound key for per-variable storage
+                compound_key = f"{var_name}::{source_name}"
+
                 # First check if we have saved source config (from previous edits)
-                if source_name in saved_source_configs:
-                    self._source_configs[var_name][source_name] = saved_source_configs[source_name].copy()
+                if compound_key in saved_source_configs:
+                    self._source_configs[var_name][source_name] = saved_source_configs[compound_key].copy()
                     self._update_source_list(var_name)
                     continue
 
@@ -207,11 +280,19 @@ class PageRefData(BasePage):
                         try:
                             with open(full_path, 'r', encoding='utf-8') as f:
                                 nml_content = yaml.safe_load(f) or {}
-                            # Merge the loaded content into source_data
-                            source_data.update(nml_content)
-                            # Also get variable-specific settings if available
+
+                            # Load general section
+                            if "general" in nml_content:
+                                source_data["general"] = nml_content["general"].copy()
+
+                            # Load variable-specific settings (sub_dir, varname, prefix, suffix, varunit)
                             if var_name in nml_content:
-                                source_data.update(nml_content[var_name])
+                                var_config = nml_content[var_name]
+                                # Store var-specific fields at top level for DataSourceEditor
+                                for field in ["sub_dir", "varname", "varunit", "prefix", "suffix"]:
+                                    if field in var_config:
+                                        source_data[field] = var_config[field]
+
                         except Exception as e:
                             print(f"Warning: Failed to load def_nml file {full_path}: {e}")
 
@@ -251,10 +332,14 @@ class PageRefData(BasePage):
         return get_openbench_root()
 
     def save_to_config(self):
-        """Save to config."""
+        """Save to config.
+
+        Uses compound key "var_name::source_name" for source_configs to preserve
+        per-variable configurations even when the same source is used by multiple variables.
+        """
         general = {}
         def_nml = {}
-        source_configs = {}  # Store full source configurations
+        source_configs = {}  # Store full source configurations with compound keys
 
         for var_name, sources in self._source_configs.items():
             if sources:
@@ -270,8 +355,11 @@ class PageRefData(BasePage):
                         def_nml_path = f"{basedir}/nml/ref/{source_name}.yaml"
                     def_nml[source_name] = def_nml_path
 
-                    # Store the full source configuration for namelist sync
-                    source_configs[source_name] = source_data
+                    # Store with compound key to preserve per-variable configs
+                    compound_key = f"{var_name}::{source_name}"
+                    source_configs[compound_key] = source_data.copy()
+                    # Also store var_name in the config for later retrieval
+                    source_configs[compound_key]["_var_name"] = var_name
 
         ref_data = {
             "general": general,

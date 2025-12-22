@@ -108,7 +108,7 @@ def main():
     checkmark_path = styles_dir / "checkmark.png"
 
     try:
-        with open(stylesheet_path, "r") as f:
+        with open(stylesheet_path, "r", encoding='utf-8') as f:
             stylesheet = f.read()
             # Replace placeholder with actual checkmark image path
             stylesheet = stylesheet.replace(

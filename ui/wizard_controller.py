@@ -263,6 +263,7 @@ class WizardController(QObject):
         """
         Sync namelists to output directory.
         Called automatically when config changes if auto_sync_enabled is True.
+        Also saves the main config file to the nml folder.
         """
         if not self._auto_sync_enabled:
             return
@@ -277,11 +278,30 @@ class WizardController(QObject):
         openbench_root = self._project_root or get_openbench_root()
 
         try:
+            # Sync data source namelists
             self._config_manager.sync_namelists(
                 self._config, output_dir, openbench_root
             )
             # Also cleanup unused files
             self._config_manager.cleanup_unused_namelists(self._config, output_dir)
+
+            # Save main config file to nml folder
+            self._save_main_config(output_dir, basename, openbench_root)
         except Exception as e:
             # Log error but don't crash
             print(f"Warning: Failed to sync namelists: {e}")
+
+    def _save_main_config(self, output_dir: str, basename: str, openbench_root: str):
+        """Save the main config file to the nml folder."""
+        import os
+
+        nml_dir = os.path.join(output_dir, "nml")
+        os.makedirs(nml_dir, exist_ok=True)
+
+        main_path = os.path.join(nml_dir, f"main-{basename}.yaml")
+        main_content = self._config_manager.generate_main_nml(
+            self._config, openbench_root, output_dir
+        )
+
+        with open(main_path, 'w', encoding='utf-8') as f:
+            f.write(main_content)

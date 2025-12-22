@@ -20,12 +20,12 @@ def get_openbench_root() -> str:
         home_dir = os.path.expanduser("~")
         config_file = os.path.join(home_dir, ".openbench_wizard", "config.txt")
         if os.path.exists(config_file):
-            with open(config_file, 'r') as f:
+            with open(config_file, 'r', encoding='utf-8') as f:
                 path = f.read().strip()
                 if path and os.path.exists(path):
                     return os.path.normpath(path)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Warning: Could not load saved OpenBench path: {e}")
 
     # Search common locations
     possible_roots = [

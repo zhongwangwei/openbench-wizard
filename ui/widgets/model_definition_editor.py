@@ -45,15 +45,27 @@ EVALUATION_VARIABLES = [
 
 
 class ModelDefinitionEditor(QDialog):
-    """Dialog for creating new model definition files."""
+    """Dialog for creating and editing model definition files."""
 
-    def __init__(self, initial_data: Optional[Dict[str, Any]] = None, parent=None):
+    def __init__(
+        self,
+        initial_data: Optional[Dict[str, Any]] = None,
+        file_path: Optional[str] = None,
+        parent=None
+    ):
         super().__init__(parent)
         self.initial_data = initial_data or {}
-        self._saved_path = ""
+        self.file_path = file_path  # Path to existing file (for editing)
+        self._saved_path = file_path or ""
 
-        self.setWindowTitle("New Model Definition")
-        self.setMinimumSize(600, 500)
+        # Set title based on mode
+        if file_path:
+            self.setWindowTitle(f"Edit Model Definition - {os.path.basename(file_path)}")
+        else:
+            self.setWindowTitle("New Model Definition")
+
+        self.setMinimumSize(700, 600)
+        self.resize(800, 700)
         self.setModal(True)
 
         self._setup_ui()
@@ -112,6 +124,12 @@ class ModelDefinitionEditor(QDialog):
         # Dialog buttons
         btn_layout = QHBoxLayout()
 
+        # Save button (only when editing existing file)
+        if self.file_path:
+            self.btn_save_inplace = QPushButton("Save")
+            self.btn_save_inplace.clicked.connect(self._save_inplace)
+            btn_layout.addWidget(self.btn_save_inplace)
+
         self.btn_save = QPushButton("Save As...")
         self.btn_save.clicked.connect(self._save_file)
         btn_layout.addWidget(self.btn_save)
@@ -158,8 +176,10 @@ class ModelDefinitionEditor(QDialog):
             var_item = self.var_table.item(i, 0)
             var_name = var_item.data(Qt.UserRole)
 
-            varname = self.var_table.item(i, 1).text().strip()
-            varunit = self.var_table.item(i, 2).text().strip()
+            item1 = self.var_table.item(i, 1)
+            item2 = self.var_table.item(i, 2)
+            varname = item1.text().strip() if item1 else ""
+            varunit = item2.text().strip() if item2 else ""
 
             # Only include if at least varname is provided
             if varname or varunit:
@@ -170,8 +190,48 @@ class ModelDefinitionEditor(QDialog):
 
         return data
 
+    def _save_inplace(self):
+        """Save model definition to the existing file."""
+        if not self.file_path:
+            return
+
+        # Close any active cell editor to commit edits
+        self.var_table.setCurrentCell(-1, -1)
+
+        model_name = self.model_name.text().strip()
+        if not model_name:
+            QMessageBox.warning(self, "Error", "Please enter a model name.")
+            return
+
+        data = self.get_data()
+
+        try:
+            with open(self.file_path, 'w', encoding='utf-8') as f:
+                yaml.dump(
+                    data,
+                    f,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,
+                    indent=2
+                )
+
+            self._saved_path = self.file_path
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Model definition saved to:\n{self.file_path}"
+            )
+            self.accept()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
+
     def _save_file(self):
-        """Save model definition to file."""
+        """Save model definition to a new file."""
+        # Close any active cell editor to commit edits
+        self.var_table.setCurrentCell(-1, -1)
+
         model_name = self.model_name.text().strip()
         if not model_name:
             QMessageBox.warning(self, "Error", "Please enter a model name.")

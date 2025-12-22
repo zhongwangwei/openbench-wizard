@@ -33,6 +33,7 @@ class PageComparisons(BasePage):
     PAGE_ID = "comparisons"
     PAGE_TITLE = "Comparisons"
     PAGE_SUBTITLE = "Select comparison visualizations and analyses"
+    CONTENT_EXPAND = True  # Allow content to fill available space
 
     def _setup_content(self):
         """Setup page content."""

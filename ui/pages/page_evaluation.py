@@ -62,6 +62,7 @@ class PageEvaluation(BasePage):
     PAGE_ID = "evaluation_items"
     PAGE_TITLE = "Evaluation Items"
     PAGE_SUBTITLE = "Select the variables to evaluate"
+    CONTENT_EXPAND = True  # Allow content to fill available space
 
     def _setup_content(self):
         """Setup page content."""

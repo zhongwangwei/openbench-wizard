@@ -25,6 +25,7 @@ class PageStatistics(BasePage):
     PAGE_ID = "statistics"
     PAGE_TITLE = "Statistics"
     PAGE_SUBTITLE = "Select statistical analyses"
+    CONTENT_EXPAND = True  # Allow content to fill available space
 
     def _setup_content(self):
         """Setup page content."""

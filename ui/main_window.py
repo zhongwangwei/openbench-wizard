@@ -407,20 +407,26 @@ class MainWindow(QMainWindow):
         except FileNotFoundError:
             QMessageBox.critical(
                 self,
-                "Error",
-                f"File not found:\n{file_path}"
+                "File Not Found",
+                f"Configuration file not found:\n{file_path}"
+            )
+        except PermissionError:
+            QMessageBox.critical(
+                self,
+                "Permission Denied",
+                f"Cannot read file (permission denied):\n{file_path}"
             )
         except yaml.YAMLError as e:
             QMessageBox.critical(
                 self,
-                "Error",
-                f"Failed to parse YAML file:\n{str(e)}"
+                "YAML Parse Error",
+                f"Invalid YAML format in file:\n{file_path}\n\nDetails: {str(e)}"
             )
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "Error",
-                f"Failed to load configuration:\n{str(e)}"
+                "Load Error",
+                f"Failed to load configuration:\n{file_path}\n\nError: {str(e)}"
             )
 
     def _load_main_config(self, loaded_config: dict, new_config: dict,

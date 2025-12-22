@@ -199,10 +199,10 @@ class PageRunMonitor(BasePage):
             config_dir = os.path.join(home_dir, ".openbench_wizard")
             os.makedirs(config_dir, exist_ok=True)
             config_file = os.path.join(config_dir, "config.txt")
-            with open(config_file, 'w') as f:
+            with open(config_file, 'w', encoding='utf-8') as f:
                 f.write(path)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: Could not save OpenBench path: {e}")
 
     def _on_stop(self):
         """Handle stop request."""
@@ -222,13 +222,20 @@ class PageRunMonitor(BasePage):
         output_dir = self.controller.get_output_dir()
 
         if os.path.exists(output_dir):
-            # Cross-platform open folder
-            if platform.system() == "Windows":
-                os.startfile(output_dir)
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", output_dir])
-            else:  # Linux
-                subprocess.run(["xdg-open", output_dir])
+            # Cross-platform open folder with error handling
+            try:
+                if platform.system() == "Windows":
+                    os.startfile(output_dir)
+                elif platform.system() == "Darwin":  # macOS
+                    subprocess.run(["open", output_dir], check=False)
+                else:  # Linux
+                    subprocess.run(["xdg-open", output_dir], check=False)
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Open Error",
+                    f"Could not open directory:\n{output_dir}\n\nError: {str(e)}"
+                )
         else:
             QMessageBox.warning(
                 self,

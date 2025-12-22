@@ -8,9 +8,12 @@ from ui.widgets import CheckboxGroup
 
 
 SCORES_ITEMS = {
-    "Scores": [
+    "ILAMB Scoring System": [
         "nBiasScore", "nRMSEScore", "nPhaseScore", "nIavScore",
-        "nSpatialScore", "Overall_Score", "The_Ideal_Point_score"
+        "nSpatialScore", "Overall_Score"
+    ],
+    "Other": [
+        "The_Ideal_Point_score"
     ],
 }
 
@@ -21,6 +24,7 @@ class PageScores(BasePage):
     PAGE_ID = "scores"
     PAGE_TITLE = "Scores"
     PAGE_SUBTITLE = "Select scoring methods"
+    CONTENT_EXPAND = True  # Allow content to fill available space
 
     def _setup_content(self):
         """Setup page content."""

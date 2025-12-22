@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QPushButton, QGroupBox, QRadioButton, QButtonGroup,
-    QDialogButtonBox, QLabel, QMessageBox
+    QDialogButtonBox, QLabel, QMessageBox, QFileDialog
 )
 from PySide6.QtCore import Qt
 
@@ -18,21 +18,41 @@ from core.path_utils import to_absolute_path, validate_path, get_openbench_root
 
 
 class DataSourceEditor(QDialog):
-    """Dialog for editing data source configuration."""
+    """Dialog for editing data source configuration.
+
+    For reference data:
+        - Each variable has its own sub_dir, varname, prefix, suffix, varunit
+        - These are stored per-variable in the YAML file
+
+    For simulation data:
+        - prefix/suffix are shared at the general level for all variables
+        - All variables from the same case share the same naming pattern
+    """
 
     def __init__(
         self,
         source_name: str = "",
         source_type: str = "ref",  # "ref" or "sim"
+        var_name: str = "",  # Variable name (for ref data context)
         initial_data: Optional[Dict[str, Any]] = None,
         parent=None
     ):
         super().__init__(parent)
         self.source_name = source_name
         self.source_type = source_type
+        self.var_name = var_name
         self.initial_data = initial_data or {}
 
-        self.setWindowTitle(f"Configure Data Source: {source_name}" if source_name else "New Data Source")
+        # Build title with context
+        if source_name and var_name:
+            title = f"Configure {source_name} for {var_name.replace('_', ' ')}"
+        elif source_name:
+            title = f"Configure Data Source: {source_name}"
+        elif var_name:
+            title = f"New Data Source for {var_name.replace('_', ' ')}"
+        else:
+            title = "New Data Source"
+        self.setWindowTitle(title)
         self.setMinimumWidth(500)
         self.setModal(True)
 
@@ -44,6 +64,15 @@ class DataSourceEditor(QDialog):
         """Setup dialog UI."""
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
+
+        # === Load from File Button ===
+        load_layout = QHBoxLayout()
+        self.btn_load_file = QPushButton("Load from File...")
+        self.btn_load_file.setToolTip("Load configuration from an existing YAML file")
+        self.btn_load_file.clicked.connect(self._load_from_file)
+        load_layout.addWidget(self.btn_load_file)
+        load_layout.addStretch()
+        layout.addLayout(load_layout)
 
         # Source name (if new)
         if not self.source_name:
@@ -134,39 +163,76 @@ class DataSourceEditor(QDialog):
 
         layout.addWidget(time_group)
 
-        # === Variable Mapping ===
-        var_group = QGroupBox("Variable Mapping")
-        var_layout = QFormLayout(var_group)
+        # === Variable Mapping (for ref data) or File Naming (for sim data) ===
+        if self.source_type == "ref":
+            # For reference data: variable-specific settings
+            var_group_title = f"Variable Settings ({self.var_name.replace('_', ' ')})" if self.var_name else "Variable Settings"
+            var_group = QGroupBox(var_group_title)
+            var_layout = QFormLayout(var_group)
 
-        # Sub directory (optional, relative to root_dir)
-        self.sub_dir_input = QLineEdit()
-        self.sub_dir_input.setPlaceholderText("Optional subdirectory (e.g., Latent_Heat/FLUXCOM)")
-        var_layout.addRow("Sub Directory:", self.sub_dir_input)
+            # Sub directory (optional, relative to root_dir)
+            self.sub_dir_input = QLineEdit()
+            self.sub_dir_input.setPlaceholderText("Subdirectory (e.g., Latent_Heat/FLUXCOM)")
+            var_layout.addRow("Sub Directory:", self.sub_dir_input)
 
-        self.varname_input = QLineEdit()
-        self.varname_input.setPlaceholderText("Variable name in file (e.g., E)")
-        var_layout.addRow("Variable Name:", self.varname_input)
+            self.varname_input = QLineEdit()
+            self.varname_input.setPlaceholderText("Variable name in file (e.g., E)")
+            var_layout.addRow("Variable Name:", self.varname_input)
 
-        self.varunit_input = QLineEdit()
-        self.varunit_input.setPlaceholderText("e.g., mm month-1")
-        var_layout.addRow("Variable Unit:", self.varunit_input)
+            self.varunit_input = QLineEdit()
+            self.varunit_input.setPlaceholderText("e.g., mm month-1")
+            var_layout.addRow("Variable Unit:", self.varunit_input)
 
-        self.prefix_input = QLineEdit()
-        self.prefix_input.setPlaceholderText("File prefix (e.g., E_)")
-        var_layout.addRow("File Prefix:", self.prefix_input)
+            self.prefix_input = QLineEdit()
+            self.prefix_input.setPlaceholderText("File prefix (e.g., E_)")
+            var_layout.addRow("File Prefix:", self.prefix_input)
 
-        self.suffix_input = QLineEdit()
-        self.suffix_input.setPlaceholderText("File suffix (e.g., _GLEAM_v4.2a_MO)")
-        var_layout.addRow("File Suffix:", self.suffix_input)
+            self.suffix_input = QLineEdit()
+            self.suffix_input.setPlaceholderText("File suffix (e.g., _GLEAM_v4.2a)")
+            var_layout.addRow("File Suffix:", self.suffix_input)
 
-        layout.addWidget(var_group)
+            layout.addWidget(var_group)
+        else:
+            # For simulation data: variable settings with defaults from model definition
+            var_group_title = f"Variable Settings ({self.var_name.replace('_', ' ')})" if self.var_name else "Variable Settings"
+            var_group = QGroupBox(var_group_title)
+            var_layout = QFormLayout(var_group)
+
+            # Sub directory (optional, relative to root_dir)
+            self.sub_dir_input = QLineEdit()
+            self.sub_dir_input.setPlaceholderText("Subdirectory (optional)")
+            var_layout.addRow("Sub Directory:", self.sub_dir_input)
+
+            self.varname_input = QLineEdit()
+            self.varname_input.setPlaceholderText("Variable name in file (from model definition)")
+            var_layout.addRow("Variable Name:", self.varname_input)
+
+            self.varunit_input = QLineEdit()
+            self.varunit_input.setPlaceholderText("Variable unit (from model definition)")
+            var_layout.addRow("Variable Unit:", self.varunit_input)
+
+            layout.addWidget(var_group)
+
+            # File naming at general level (shared across variables)
+            naming_group = QGroupBox("File Naming (Shared)")
+            naming_layout = QFormLayout(naming_group)
+
+            self.prefix_input = QLineEdit()
+            self.prefix_input.setPlaceholderText("File prefix (e.g., Case01_hist_)")
+            naming_layout.addRow("File Prefix:", self.prefix_input)
+
+            self.suffix_input = QLineEdit()
+            self.suffix_input.setPlaceholderText("File suffix (optional)")
+            naming_layout.addRow("File Suffix:", self.suffix_input)
+
+            layout.addWidget(naming_group)
 
         # === Simulation-specific: Model definition ===
         if self.source_type == "sim":
             model_group = QGroupBox("Model Settings")
             model_layout = QFormLayout(model_group)
 
-            # Model definition with New button
+            # Model definition with New and Show Variables buttons
             model_row = QHBoxLayout()
             self.model_nml = PathSelector(
                 mode="file",
@@ -176,11 +242,20 @@ class DataSourceEditor(QDialog):
             model_row.addWidget(self.model_nml, 1)
 
             self.btn_new_model = QPushButton("New...")
-            self.btn_new_model.setFixedWidth(70)
+            self.btn_new_model.setFixedWidth(60)
             self.btn_new_model.clicked.connect(self._create_new_model)
             model_row.addWidget(self.btn_new_model)
 
+            self.btn_edit_model = QPushButton("Edit")
+            self.btn_edit_model.setFixedWidth(50)
+            self.btn_edit_model.setToolTip("Edit variables defined in the model file")
+            self.btn_edit_model.clicked.connect(self._edit_model_definition)
+            model_row.addWidget(self.btn_edit_model)
+
             model_layout.addRow("Model Definition:", model_row)
+
+            # Connect model path change to auto-populate variable defaults
+            self.model_nml.path_changed.connect(self._on_model_changed)
 
             layout.addWidget(model_group)
 
@@ -203,7 +278,11 @@ class DataSourceEditor(QDialog):
         self.grid_res_input.setVisible(not is_station)
 
     def _load_data(self):
-        """Load initial data into form."""
+        """Load initial data into form.
+
+        For ref data: prefix/suffix are variable-specific (at top level of data)
+        For sim data: prefix/suffix are in general section (shared across variables)
+        """
         data = self.initial_data
         if not data:
             return
@@ -253,18 +332,24 @@ class DataSourceEditor(QDialog):
                 fulllist = to_absolute_path(fulllist, openbench_root)
             self.fulllist.set_path(fulllist)
 
-        # Variable mapping (might be at top level for ref data)
-        var_data = data if "varname" in data else general
-        if "sub_dir" in var_data:
-            self.sub_dir_input.setText(str(var_data["sub_dir"]))
-        if "varname" in var_data:
-            self.varname_input.setText(str(var_data["varname"]))
-        if "varunit" in var_data:
-            self.varunit_input.setText(str(var_data["varunit"]))
-        if "prefix" in var_data:
-            self.prefix_input.setText(str(var_data["prefix"]))
-        if "suffix" in var_data:
-            self.suffix_input.setText(str(var_data["suffix"]))
+        # Load variable mapping fields (for both ref and sim)
+        # Check top level first, then general section for backward compatibility
+        if "sub_dir" in data:
+            self.sub_dir_input.setText(str(data["sub_dir"]))
+        if "varname" in data:
+            self.varname_input.setText(str(data["varname"]))
+        if "varunit" in data:
+            self.varunit_input.setText(str(data["varunit"]))
+
+        # Load prefix/suffix from top level or general section
+        if "prefix" in data:
+            self.prefix_input.setText(str(data["prefix"]))
+        elif "prefix" in general:
+            self.prefix_input.setText(str(general["prefix"]))
+        if "suffix" in data:
+            self.suffix_input.setText(str(data["suffix"]))
+        elif "suffix" in general:
+            self.suffix_input.setText(str(general["suffix"]))
 
         # Model definition for sim - convert to absolute path
         if self.source_type == "sim" and "model_namelist" in general:
@@ -273,8 +358,266 @@ class DataSourceEditor(QDialog):
                 model_nml = to_absolute_path(model_nml, openbench_root)
             self.model_nml.set_path(model_nml)
 
+    def _load_from_file(self):
+        """Load configuration from an existing YAML file."""
+        import os
+
+        # Get file path from user
+        file_path = self._prompt_for_yaml_file()
+        if not file_path:
+            return
+
+        # Load and parse YAML content
+        content = self._load_yaml_content(file_path)
+        if content is None:
+            return
+
+        # Extract source name from filename if creating new source
+        if hasattr(self, 'name_input') and not self.name_input.text():
+            source_name = os.path.splitext(os.path.basename(file_path))[0]
+            self.name_input.setText(source_name)
+
+        # Populate form fields
+        general = content.get("general", {})
+        self._populate_general_settings(general)
+        self._populate_variable_settings(content, general)
+
+        QMessageBox.information(
+            self, "Loaded",
+            f"Configuration loaded from:\n{os.path.basename(file_path)}"
+        )
+
+    def _prompt_for_yaml_file(self) -> str:
+        """Open file dialog to select a YAML file. Returns file path or empty string."""
+        import os
+
+        openbench_root = get_openbench_root()
+        default_dir = os.path.join(openbench_root, "nml", "nml-yaml")
+
+        if self.source_type == "ref":
+            ref_dir = os.path.join(default_dir, "Ref_variables_definition_LowRes")
+            if os.path.exists(ref_dir):
+                default_dir = ref_dir
+        else:
+            user_dir = os.path.join(default_dir, "user")
+            if os.path.exists(user_dir):
+                default_dir = user_dir
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Configuration from YAML",
+            default_dir,
+            "YAML Files (*.yaml *.yml);;All Files (*)"
+        )
+        return file_path
+
+    def _load_yaml_content(self, file_path: str) -> dict:
+        """Load and parse YAML file. Returns content dict or None on error."""
+        import yaml
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Load Error",
+                f"Failed to load file:\n{file_path}\n\nError: {str(e)}"
+            )
+            return None
+
+    def _populate_general_settings(self, general: dict):
+        """Populate form fields from general section of config."""
+        openbench_root = get_openbench_root()
+
+        # Root directory
+        root_dir = general.get("root_dir") or general.get("dir", "")
+        if root_dir:
+            root_dir = to_absolute_path(root_dir, openbench_root)
+            self.root_dir.set_path(root_dir)
+
+        # Data type
+        if "data_type" in general:
+            if general["data_type"] in ("stn", "station"):
+                self.radio_station.setChecked(True)
+            else:
+                self.radio_grid.setChecked(True)
+            self._on_data_type_changed()
+
+        # Data groupby
+        if "data_groupby" in general:
+            idx = self.groupby_combo.findText(general["data_groupby"], Qt.MatchFixedString)
+            if idx >= 0:
+                self.groupby_combo.setCurrentIndex(idx)
+
+        # Time settings
+        if "tim_res" in general:
+            idx = self.tim_res_combo.findText(general["tim_res"], Qt.MatchFixedString)
+            if idx >= 0:
+                self.tim_res_combo.setCurrentIndex(idx)
+
+        if "syear" in general:
+            self.syear_input.setText(str(general["syear"]))
+        if "eyear" in general:
+            self.eyear_input.setText(str(general["eyear"]))
+        if "timezone" in general:
+            try:
+                self.timezone_spin.setValue(float(general["timezone"]))
+            except (ValueError, TypeError):
+                pass
+        if "grid_res" in general:
+            self.grid_res_input.setText(str(general["grid_res"]))
+        if "fulllist" in general and general["fulllist"]:
+            self.fulllist.set_path(to_absolute_path(general["fulllist"], openbench_root))
+
+    def _populate_variable_settings(self, content: dict, general: dict):
+        """Populate variable-specific settings based on source type."""
+        openbench_root = get_openbench_root()
+
+        if self.source_type == "ref":
+            self._populate_ref_variable_settings(content)
+        else:
+            self._populate_sim_variable_settings(content, general, openbench_root)
+
+    def _populate_ref_variable_settings(self, content: dict):
+        """Populate reference data variable-specific fields."""
+        var_config = None
+        if self.var_name and self.var_name in content:
+            var_config = content[self.var_name]
+        elif self.var_name:
+            # Variable not found in file, show info
+            available_vars = [k for k in content.keys() if k != "general"]
+            if available_vars:
+                QMessageBox.information(
+                    self, "Variable Not Found",
+                    f"Variable '{self.var_name}' not found in file.\n\n"
+                    f"Available variables: {', '.join(available_vars[:10])}"
+                    f"{'...' if len(available_vars) > 10 else ''}\n\n"
+                    "General settings have been loaded."
+                )
+
+        if var_config:
+            if "sub_dir" in var_config:
+                self.sub_dir_input.setText(str(var_config["sub_dir"]))
+            if "varname" in var_config:
+                self.varname_input.setText(str(var_config["varname"]))
+            if "varunit" in var_config:
+                self.varunit_input.setText(str(var_config["varunit"]))
+            if "prefix" in var_config:
+                self.prefix_input.setText(str(var_config["prefix"]))
+            if "suffix" in var_config:
+                self.suffix_input.setText(str(var_config["suffix"]))
+
+    def _populate_sim_variable_settings(self, content: dict, general: dict, openbench_root: str):
+        """Populate simulation data variable-specific fields."""
+        # For sim data: prefix/suffix from general
+        if "prefix" in general:
+            self.prefix_input.setText(str(general["prefix"]))
+        if "suffix" in general:
+            self.suffix_input.setText(str(general["suffix"]))
+
+        # Load variable-specific fields from content (top level)
+        # These might be saved per-variable in the wizard config
+        if "sub_dir" in content:
+            self.sub_dir_input.setText(str(content["sub_dir"]))
+        if "varname" in content:
+            self.varname_input.setText(str(content["varname"]))
+        if "varunit" in content:
+            self.varunit_input.setText(str(content["varunit"]))
+
+        # Model namelist
+        if "model_namelist" in general and general["model_namelist"]:
+            model_path = to_absolute_path(general["model_namelist"], openbench_root)
+            self.model_nml.set_path(model_path)
+
+    def _on_model_changed(self, path: str, force: bool = False):
+        """Auto-populate varname and varunit from model definition when model is selected.
+
+        Args:
+            path: Path to the model definition file
+            force: If True, update fields even if they already have values
+        """
+        if not path or not self.var_name:
+            return
+
+        import yaml
+        import os
+
+        openbench_root = get_openbench_root()
+        full_path = to_absolute_path(path, openbench_root)
+
+        if not os.path.exists(full_path):
+            return
+
+        try:
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = yaml.safe_load(f) or {}
+        except Exception:
+            return
+
+        # Look up current variable in model definition
+        if self.var_name in content:
+            var_config = content[self.var_name]
+
+            # Update fields (only if empty, unless force=True)
+            if "varname" in var_config:
+                if force or not self.varname_input.text():
+                    self.varname_input.setText(str(var_config["varname"]))
+            if "varunit" in var_config:
+                if force or not self.varunit_input.text():
+                    self.varunit_input.setText(str(var_config["varunit"]))
+
+    def _edit_model_definition(self):
+        """Edit the selected model definition file."""
+        import yaml
+        import os
+        from ui.widgets.model_definition_editor import ModelDefinitionEditor
+
+        model_path = self.model_nml.path()
+        if not model_path:
+            QMessageBox.information(
+                self, "No Model Selected",
+                "Please select a model definition file first."
+            )
+            return
+
+        # Resolve path
+        openbench_root = get_openbench_root()
+        full_path = to_absolute_path(model_path, openbench_root)
+
+        if not os.path.exists(full_path):
+            QMessageBox.warning(
+                self, "File Not Found",
+                f"Model definition file not found:\n{full_path}"
+            )
+            return
+
+        try:
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = yaml.safe_load(f) or {}
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Load Error",
+                f"Failed to load model file:\n{str(e)}"
+            )
+            return
+
+        # Open editor with existing data
+        dialog = ModelDefinitionEditor(
+            initial_data=content,
+            file_path=full_path,
+            parent=self
+        )
+        dialog.exec()
+        # Always refresh after dialog closes (user may have saved)
+        self._on_model_changed(model_path, force=True)
+
     def get_data(self) -> Dict[str, Any]:
-        """Get form data as dictionary with absolute paths."""
+        """Get form data as dictionary with absolute paths.
+
+        For ref data: variable-specific fields (sub_dir, varname, varunit, prefix, suffix)
+                     are stored at top level of returned dict
+        For sim data: prefix/suffix are stored in general section
+        """
         is_station = self.radio_station.isChecked()
         openbench_root = get_openbench_root()
 
@@ -299,8 +642,21 @@ class DataSourceEditor(QDialog):
         # Handle year fields (preserve empty strings for station data)
         syear_text = self.syear_input.text().strip()
         eyear_text = self.eyear_input.text().strip()
-        general["syear"] = int(syear_text) if syear_text.isdigit() else syear_text
-        general["eyear"] = int(eyear_text) if eyear_text.isdigit() else eyear_text
+        # Use try/except for robust int conversion (handles negative numbers too)
+        if syear_text:
+            try:
+                general["syear"] = int(syear_text)
+            except ValueError:
+                general["syear"] = syear_text  # Keep as string if not a valid int
+        else:
+            general["syear"] = ""
+        if eyear_text:
+            try:
+                general["eyear"] = int(eyear_text)
+            except ValueError:
+                general["eyear"] = eyear_text  # Keep as string if not a valid int
+        else:
+            general["eyear"] = ""
 
         # Handle grid_res (preserve empty strings)
         grid_res_text = self.grid_res_input.text().strip()
@@ -320,7 +676,7 @@ class DataSourceEditor(QDialog):
 
         data = {"general": general}
 
-        # Add variable mapping
+        # Variable-specific fields at top level (for both ref and sim)
         if self.sub_dir_input.text():
             data["sub_dir"] = self.sub_dir_input.text()
         if self.varname_input.text():
@@ -332,6 +688,13 @@ class DataSourceEditor(QDialog):
         if self.suffix_input.text():
             data["suffix"] = self.suffix_input.text()
 
+        # For sim data: also store prefix/suffix in general section (for backward compatibility)
+        if self.source_type == "sim":
+            if self.prefix_input.text():
+                general["prefix"] = self.prefix_input.text()
+            if self.suffix_input.text():
+                general["suffix"] = self.suffix_input.text()
+
         # Add model definition for sim - convert to absolute
         if self.source_type == "sim":
             model_path = self.model_nml.path()
@@ -342,9 +705,27 @@ class DataSourceEditor(QDialog):
         return data
 
     def accept(self):
-        """Override accept to validate paths before closing."""
-        # Validate root_dir
+        """Override accept to validate required fields and paths before closing."""
+        # Validate source name (required for new sources)
+        if hasattr(self, 'name_input'):
+            source_name = self.name_input.text().strip()
+            if not source_name:
+                QMessageBox.warning(
+                    self, "Validation Error",
+                    "Source name is required."
+                )
+                self.name_input.setFocus()
+                return
+
+        # Validate root_dir (required)
         root_dir = self.root_dir.path()
+        if not root_dir:
+            QMessageBox.warning(
+                self, "Validation Error",
+                "Root directory is required."
+            )
+            return
+
         if root_dir:
             root_dir = to_absolute_path(root_dir, get_openbench_root())
             is_valid, error = validate_path(root_dir, "directory")

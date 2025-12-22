@@ -107,8 +107,9 @@ class CheckboxGroup(QWidget):
                 self._checkboxes[item_name] = cb
                 group_layout.addWidget(cb, i // col_count, i % col_count)
 
-            container_layout.addWidget(group_box)
+            container_layout.addWidget(group_box)  # No stretch - maintain natural size
 
+        # Add stretch at end to push groups to top
         container_layout.addStretch()
         scroll.setWidget(container)
         layout.addWidget(scroll, 1)

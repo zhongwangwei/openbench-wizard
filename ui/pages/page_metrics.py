@@ -37,6 +37,7 @@ class PageMetrics(BasePage):
     PAGE_ID = "metrics"
     PAGE_TITLE = "Metrics"
     PAGE_SUBTITLE = "Select evaluation metrics"
+    CONTENT_EXPAND = True  # Allow content to fill available space
 
     def _setup_content(self):
         """Setup page content."""

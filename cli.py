@@ -298,11 +298,11 @@ def interactive_mode():
     ref_path = Path(output_dir) / "ref_nml.yaml"
     sim_path = Path(output_dir) / "sim_nml.yaml"
 
-    with open(main_path, 'w') as f:
+    with open(main_path, 'w', encoding='utf-8') as f:
         f.write(main_nml)
-    with open(ref_path, 'w') as f:
+    with open(ref_path, 'w', encoding='utf-8') as f:
         f.write(ref_nml)
-    with open(sim_path, 'w') as f:
+    with open(sim_path, 'w', encoding='utf-8') as f:
         f.write(sim_nml)
 
     print()
@@ -384,7 +384,7 @@ sim_data:
     data_type: flux
 """
 
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         f.write(template)
 
     print(f"✓ 配置模板已生成: {output_path}")
@@ -398,7 +398,7 @@ def from_config_file(config_path, output_dir=None):
 
     print(f"读取配置文件: {config_path}")
 
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         user_config = yaml.safe_load(f)
 
     config = ConfigManager()
@@ -424,11 +424,11 @@ def from_config_file(config_path, output_dir=None):
     ref_path = Path(output_dir) / "ref_nml.yaml"
     sim_path = Path(output_dir) / "sim_nml.yaml"
 
-    with open(main_path, 'w') as f:
+    with open(main_path, 'w', encoding='utf-8') as f:
         f.write(main_nml)
-    with open(ref_path, 'w') as f:
+    with open(ref_path, 'w', encoding='utf-8') as f:
         f.write(ref_nml)
-    with open(sim_path, 'w') as f:
+    with open(sim_path, 'w', encoding='utf-8') as f:
         f.write(sim_nml)
 
     print()

@@ -20,6 +20,9 @@ class BasePage(QWidget):
     PAGE_ID = "base"
     PAGE_TITLE = "Base Page"
     PAGE_SUBTITLE = ""
+    # Set to True in subclasses to allow content to expand and fill available space
+    # Set to False (default) to keep content at top with stretch at bottom
+    CONTENT_EXPAND = False
 
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -74,8 +77,10 @@ class BasePage(QWidget):
         # Let subclasses add their content
         self._setup_content()
 
-        # Add stretch at the end
-        self.content_layout.addStretch()
+        # Add stretch at the end only if content should not expand
+        # Subclasses can set CONTENT_EXPAND = True to fill available space
+        if not self.CONTENT_EXPAND:
+            self.content_layout.addStretch()
 
         scroll.setWidget(self.content)
         layout.addWidget(scroll, 1)

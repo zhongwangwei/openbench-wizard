@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Simulation Data configuration page.
+
+For simulation data, prefix/suffix are shared across all variables at the general level.
+This is different from reference data where each variable has its own prefix/suffix.
 """
 
 from typing import Dict, Any
@@ -21,6 +24,7 @@ class PageSimData(BasePage):
     PAGE_ID = "sim_data"
     PAGE_TITLE = "Simulation Data"
     PAGE_SUBTITLE = "Configure simulation data sources for each evaluation variable"
+    CONTENT_EXPAND = True  # Allow content to fill available space
 
     def _setup_content(self):
         """Setup page content."""
@@ -32,6 +36,8 @@ class PageSimData(BasePage):
         self.content_layout.addWidget(self.var_container)
 
         self._source_lists: Dict[str, QListWidget] = {}
+        # For sim data: _source_configs[var_name][source_name] = {...}
+        # prefix/suffix are stored in general section (shared)
         self._source_configs: Dict[str, Dict[str, Any]] = {}
 
     def _rebuild_variable_groups(self):
@@ -56,11 +62,12 @@ class PageSimData(BasePage):
             group = QGroupBox(var_name.replace("_", " "))
             group_layout = QVBoxLayout(group)
 
+            # Source list - use minimum height instead of maximum for better space usage
             source_list = QListWidget()
-            source_list.setMaximumHeight(100)
+            source_list.setMinimumHeight(60)
             source_list.setProperty("var_name", var_name)
             self._source_lists[var_name] = source_list
-            group_layout.addWidget(source_list)
+            group_layout.addWidget(source_list, 1)  # stretch factor 1 to expand
 
             btn_layout = QHBoxLayout()
 
@@ -68,6 +75,12 @@ class PageSimData(BasePage):
             btn_add.setProperty("secondary", True)
             btn_add.clicked.connect(lambda checked, v=var_name: self._add_source(v))
             btn_layout.addWidget(btn_add)
+
+            btn_copy = QPushButton("Copy")
+            btn_copy.setProperty("secondary", True)
+            btn_copy.setToolTip("Copy selected source as a new source")
+            btn_copy.clicked.connect(lambda checked, v=var_name: self._copy_source(v))
+            btn_layout.addWidget(btn_copy)
 
             btn_edit = QPushButton("Edit")
             btn_edit.setProperty("secondary", True)
@@ -82,19 +95,66 @@ class PageSimData(BasePage):
             btn_layout.addStretch()
             group_layout.addLayout(btn_layout)
 
-            self.var_layout.addWidget(group)
+            self.var_layout.addWidget(group, 1)  # stretch factor 1 to expand
 
-        self.var_layout.addStretch()
+        # No addStretch() here - let groups expand to fill space
 
     def _add_source(self, var_name: str):
         """Add new data source."""
-        dialog = DataSourceEditor(source_type="sim", parent=self)
+        dialog = DataSourceEditor(
+            source_type="sim",
+            var_name=var_name,  # Pass for context (shown in title)
+            parent=self
+        )
         if dialog.exec():
             source_name = dialog.get_source_name()
             if source_name:
                 if var_name not in self._source_configs:
                     self._source_configs[var_name] = {}
                 self._source_configs[var_name][source_name] = dialog.get_data()
+                self._update_source_list(var_name)
+                self.save_to_config()
+
+    def _copy_source(self, var_name: str):
+        """Copy selected data source as a new source."""
+        import copy
+
+        source_list = self._source_lists.get(var_name)
+        if not source_list:
+            return
+
+        current = source_list.currentItem()
+        if not current:
+            QMessageBox.information(self, "Info", "Please select a source to copy.")
+            return
+
+        source_name = current.text()
+        existing_data = self._source_configs.get(var_name, {}).get(source_name, {})
+
+        # Deep copy the data to avoid modifying the original
+        copied_data = copy.deepcopy(existing_data)
+        # Remove def_nml_path so a new one will be generated
+        copied_data.pop("def_nml_path", None)
+
+        # Open dialog with copied data but no source name (user must enter new name)
+        dialog = DataSourceEditor(
+            source_type="sim",
+            var_name=var_name,
+            initial_data=copied_data,
+            parent=self
+        )
+        if dialog.exec():
+            new_source_name = dialog.get_source_name()
+            if new_source_name:
+                if new_source_name == source_name:
+                    QMessageBox.warning(
+                        self, "Error",
+                        "New source name must be different from the original."
+                    )
+                    return
+                if var_name not in self._source_configs:
+                    self._source_configs[var_name] = {}
+                self._source_configs[var_name][new_source_name] = dialog.get_data()
                 self._update_source_list(var_name)
                 self.save_to_config()
 
@@ -115,6 +175,7 @@ class PageSimData(BasePage):
         dialog = DataSourceEditor(
             source_name=source_name,
             source_type="sim",
+            var_name=var_name,  # Pass for context (shown in title)
             initial_data=existing_data,
             parent=self
         )
@@ -157,7 +218,11 @@ class PageSimData(BasePage):
             source_list.addItem(source_name)
 
     def load_from_config(self):
-        """Load from config."""
+        """Load from config.
+
+        For sim data, prefix/suffix are in the general section of the source file,
+        shared across all variables.
+        """
         import os
         import yaml
 
@@ -180,6 +245,7 @@ class PageSimData(BasePage):
             self._source_configs[var_name] = {}
             for source_name in sources:
                 # First check if we have saved source config (from previous edits)
+                # For sim data, source_name is used directly (no compound key)
                 if source_name in saved_source_configs:
                     self._source_configs[var_name][source_name] = saved_source_configs[source_name].copy()
                     self._update_source_list(var_name)
@@ -197,11 +263,12 @@ class PageSimData(BasePage):
                         try:
                             with open(full_path, 'r', encoding='utf-8') as f:
                                 nml_content = yaml.safe_load(f) or {}
-                            # Merge the loaded content into source_data
-                            source_data.update(nml_content)
-                            # Also get variable-specific settings if available
-                            if var_name in nml_content:
-                                source_data.update(nml_content[var_name])
+
+                            # For sim data, store the general section
+                            # prefix/suffix are at general level
+                            if "general" in nml_content:
+                                source_data["general"] = nml_content["general"].copy()
+
                         except Exception as e:
                             print(f"Warning: Failed to load def_nml file {full_path}: {e}")
 
