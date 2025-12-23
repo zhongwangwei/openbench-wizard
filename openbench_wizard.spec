@@ -3,13 +3,37 @@
 
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+import PySide6
 
 block_cipher = None
 
-# Collect all PySide6 submodules and data files (including platform plugins)
-pyside6_submodules = collect_submodules('PySide6')
-pyside6_datas = collect_data_files('PySide6')
+# Get PySide6 installation path for platform plugins
+pyside6_path = os.path.dirname(PySide6.__file__)
+
+# Platform-specific Qt plugins
+qt_plugins = []
+if sys.platform == 'darwin':
+    # macOS: cocoa plugin
+    qt_plugins = [
+        (os.path.join(pyside6_path, 'Qt', 'plugins', 'platforms'), 'PySide6/Qt/plugins/platforms'),
+        (os.path.join(pyside6_path, 'Qt', 'plugins', 'styles'), 'PySide6/Qt/plugins/styles'),
+    ]
+elif sys.platform == 'linux':
+    # Linux: xcb plugin
+    qt_plugins = [
+        (os.path.join(pyside6_path, 'Qt', 'plugins', 'platforms'), 'PySide6/Qt/plugins/platforms'),
+        (os.path.join(pyside6_path, 'Qt', 'plugins', 'xcbglintegrations'), 'PySide6/Qt/plugins/xcbglintegrations'),
+        (os.path.join(pyside6_path, 'Qt', 'plugins', 'platformthemes'), 'PySide6/Qt/plugins/platformthemes'),
+    ]
+elif sys.platform == 'win32':
+    # Windows: windows plugin
+    qt_plugins = [
+        (os.path.join(pyside6_path, 'plugins', 'platforms'), 'PySide6/plugins/platforms'),
+        (os.path.join(pyside6_path, 'plugins', 'styles'), 'PySide6/plugins/styles'),
+    ]
+
+# Filter out non-existent paths
+qt_plugins = [(src, dst) for src, dst in qt_plugins if os.path.exists(src)]
 
 # Explicit list of all hidden imports
 hidden_imports = [
@@ -49,12 +73,12 @@ hidden_imports = [
     'ui.widgets.progress_dashboard',
     'ui.widgets.data_source_editor',
     'ui.widgets.model_definition_editor',
-] + pyside6_submodules
+]
 
 # Data files to include
 datas = [
     ('ui/styles', 'ui/styles'),
-] + pyside6_datas
+] + qt_plugins
 
 a = Analysis(
     ['main.py'],
