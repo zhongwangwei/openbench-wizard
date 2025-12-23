@@ -95,9 +95,11 @@ class YamlPreview(QWidget):
         self.text_edit.setReadOnly(True)
         self.text_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
 
-        # Apply monospace font
-        font = QFont("Consolas", 11)
+        # Apply monospace font (cross-platform: Monaco for macOS, Consolas for Windows)
+        font = QFont()
         font.setStyleHint(QFont.Monospace)
+        font.setFamily("Monaco, Menlo, Consolas, Courier New")
+        font.setPointSize(11)
         self.text_edit.setFont(font)
 
         # Apply syntax highlighter
