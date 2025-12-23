@@ -118,20 +118,27 @@ jobs:
     - name: Install system dependencies
       run: |
         apt-get update
-        apt-get install -y software-properties-common
-        add-apt-repository -y ppa:deadsnakes/ppa
-        apt-get update
-        apt-get install -y python3.11 python3.11-venv python3.11-dev python3-pip
-        apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1-mesa-dev
+        apt-get install -y wget build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
+        apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1-mesa-dev ca-certificates
+
+    - name: Install Python 3.11 from source
+      run: |
+        cd /tmp
+        wget https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz
+        tar -xf Python-3.11.9.tgz
+        cd Python-3.11.9
+        ./configure --enable-optimizations --prefix=/usr/local
+        make -j$(nproc)
+        make install
 
     - name: Install Python dependencies
       run: |
-        python3.11 -m pip install --upgrade pip
-        python3.11 -m pip install pyinstaller pyside6 pyyaml psutil
+        /usr/local/bin/python3.11 -m pip install --upgrade pip
+        /usr/local/bin/python3.11 -m pip install pyinstaller pyside6 pyyaml psutil
 
     - name: Build executable
       run: |
-        python3.11 -m PyInstaller --clean openbench_wizard.spec
+        /usr/local/bin/python3.11 -m PyInstaller --clean openbench_wizard.spec
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
