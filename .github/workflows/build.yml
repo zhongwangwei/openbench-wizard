@@ -9,6 +9,7 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
+  # Build for Windows and macOS (native runners)
   build:
     strategy:
       matrix:
@@ -16,13 +17,14 @@ jobs:
           - os: windows-latest
             artifact_name: OpenBench_Wizard.exe
             output_name: OpenBench_Wizard_Windows
-          - os: macos-latest
+          # macOS Intel (x86_64)
+          - os: macos-13
             artifact_name: OpenBench_Wizard
-            output_name: OpenBench_Wizard_macOS
-          # Use ubuntu-20.04 for older GLIBC (2.31) compatibility
-          - os: ubuntu-20.04
+            output_name: OpenBench_Wizard_macOS_Intel
+          # macOS Apple Silicon (ARM64)
+          - os: macos-14
             artifact_name: OpenBench_Wizard
-            output_name: OpenBench_Wizard_Linux
+            output_name: OpenBench_Wizard_macOS_ARM
 
     runs-on: ${{ matrix.os }}
 
@@ -35,12 +37,6 @@ jobs:
       with:
         python-version: '3.11'
         cache: 'pip'
-
-    - name: Install Linux dependencies
-      if: startsWith(matrix.os, 'ubuntu')
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1
 
     - name: Install Python dependencies
       run: |
@@ -58,8 +54,52 @@ jobs:
         path: dist/${{ matrix.artifact_name }}
         retention-days: 30
 
+  # Build for Linux using Debian 10 container (GLIBC 2.28 compatibility)
+  build-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:buster
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        apt-get update
+        apt-get install -y wget build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
+        apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1-mesa libgl1-mesa-dev ca-certificates
+
+    - name: Install Python 3.11 from source
+      run: |
+        cd /tmp
+        wget https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz
+        tar -xf Python-3.11.9.tgz
+        cd Python-3.11.9
+        ./configure --enable-optimizations --prefix=/usr/local
+        make -j$(nproc)
+        make install
+        ln -sf /usr/local/bin/python3.11 /usr/local/bin/python3
+        ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip3
+
+    - name: Install Python dependencies
+      run: |
+        /usr/local/bin/python3.11 -m pip install --upgrade pip
+        /usr/local/bin/python3.11 -m pip install pyinstaller pyside6 pyyaml psutil
+
+    - name: Build executable
+      run: |
+        /usr/local/bin/python3.11 -m PyInstaller --clean openbench_wizard.spec
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: OpenBench_Wizard_Linux
+        path: dist/OpenBench_Wizard
+        retention-days: 30
+
   release:
-    needs: build
+    needs: [build, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -73,16 +113,18 @@ jobs:
       run: |
         mkdir -p release
         cp artifacts/OpenBench_Wizard_Windows/OpenBench_Wizard.exe release/OpenBench_Wizard_Windows.exe
-        cp artifacts/OpenBench_Wizard_macOS/OpenBench_Wizard release/OpenBench_Wizard_macOS
+        cp artifacts/OpenBench_Wizard_macOS_Intel/OpenBench_Wizard release/OpenBench_Wizard_macOS_Intel
+        cp artifacts/OpenBench_Wizard_macOS_ARM/OpenBench_Wizard release/OpenBench_Wizard_macOS_ARM
         cp artifacts/OpenBench_Wizard_Linux/OpenBench_Wizard release/OpenBench_Wizard_Linux
-        chmod +x release/OpenBench_Wizard_macOS release/OpenBench_Wizard_Linux
+        chmod +x release/OpenBench_Wizard_macOS_Intel release/OpenBench_Wizard_macOS_ARM release/OpenBench_Wizard_Linux
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
           release/OpenBench_Wizard_Windows.exe
-          release/OpenBench_Wizard_macOS
+          release/OpenBench_Wizard_macOS_Intel
+          release/OpenBench_Wizard_macOS_ARM
           release/OpenBench_Wizard_Linux
         draft: false
         prerelease: false

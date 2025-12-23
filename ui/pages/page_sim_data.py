@@ -222,6 +222,7 @@ class PageSimData(BasePage):
 
         For sim data, prefix/suffix are in the general section of the source file,
         shared across all variables.
+        Uses compound key "var_name::source_name" for source_configs.
         """
         import os
         import yaml
@@ -231,7 +232,8 @@ class PageSimData(BasePage):
         sim_data = self.controller.config.get("sim_data", {})
         general = sim_data.get("general", {})
         def_nml = sim_data.get("def_nml", {})
-        saved_source_configs = sim_data.get("source_configs", {})  # Get saved configs
+        # saved_source_configs now uses compound key: "var_name::source_name"
+        saved_source_configs = sim_data.get("source_configs", {})
 
         eval_items = self.controller.config.get("evaluation_items", {})
         selected = [k for k, v in eval_items.items() if v]
@@ -244,10 +246,12 @@ class PageSimData(BasePage):
 
             self._source_configs[var_name] = {}
             for source_name in sources:
+                # Use compound key for per-variable storage
+                compound_key = f"{var_name}::{source_name}"
+
                 # First check if we have saved source config (from previous edits)
-                # For sim data, source_name is used directly (no compound key)
-                if source_name in saved_source_configs:
-                    self._source_configs[var_name][source_name] = saved_source_configs[source_name].copy()
+                if compound_key in saved_source_configs:
+                    self._source_configs[var_name][source_name] = saved_source_configs[compound_key].copy()
                     self._update_source_list(var_name)
                     continue
 
@@ -308,10 +312,14 @@ class PageSimData(BasePage):
         return get_openbench_root()
 
     def save_to_config(self):
-        """Save to config."""
+        """Save to config.
+
+        Uses compound key "var_name::source_name" for source_configs to preserve
+        per-variable configurations even when the same source is used by multiple variables.
+        """
         general = {}
         def_nml = {}
-        source_configs = {}  # Store full source configurations
+        source_configs = {}  # Store full source configurations with compound keys
 
         for var_name, sources in self._source_configs.items():
             if sources:
@@ -327,8 +335,11 @@ class PageSimData(BasePage):
                         def_nml_path = f"{basedir}/nml/sim/{source_name}.yaml"
                     def_nml[source_name] = def_nml_path
 
-                    # Store the full source configuration for namelist sync
-                    source_configs[source_name] = source_data
+                    # Store with compound key to preserve per-variable configs
+                    compound_key = f"{var_name}::{source_name}"
+                    source_configs[compound_key] = source_data.copy()
+                    # Also store var_name in the config for later retrieval
+                    source_configs[compound_key]["_var_name"] = var_name
 
         sim_data = {
             "general": general,
