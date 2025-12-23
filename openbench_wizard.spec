@@ -3,8 +3,13 @@
 
 import os
 import sys
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
+
+# Collect all PySide6 submodules and data files (including platform plugins)
+pyside6_submodules = collect_submodules('PySide6')
+pyside6_datas = collect_data_files('PySide6')
 
 # Explicit list of all hidden imports
 hidden_imports = [
@@ -44,12 +49,12 @@ hidden_imports = [
     'ui.widgets.progress_dashboard',
     'ui.widgets.data_source_editor',
     'ui.widgets.model_definition_editor',
-]
+] + pyside6_submodules
 
 # Data files to include
 datas = [
     ('ui/styles', 'ui/styles'),
-]
+] + pyside6_datas
 
 a = Analysis(
     ['main.py'],
