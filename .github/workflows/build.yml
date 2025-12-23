@@ -55,7 +55,7 @@ jobs:
         retention-days: 30
 
   # Build for Linux using Debian 10 container (GLIBC 2.28 compatibility)
-  build-linux:
+  build-linux-debian10:
     runs-on: ubuntu-latest
     container:
       image: debian:buster
@@ -99,12 +99,49 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: OpenBench_Wizard_Linux
+        name: OpenBench_Wizard_Linux_GLIBC2.28
+        path: dist/OpenBench_Wizard
+        retention-days: 30
+
+  # Build for Linux using Ubuntu 20.04 container (GLIBC 2.31 compatibility)
+  build-linux-ubuntu2004:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        apt-get update
+        apt-get install -y software-properties-common
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update
+        apt-get install -y python3.11 python3.11-venv python3.11-dev python3-pip
+        apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1-mesa-dev
+
+    - name: Install Python dependencies
+      run: |
+        python3.11 -m pip install --upgrade pip
+        python3.11 -m pip install pyinstaller pyside6 pyyaml psutil
+
+    - name: Build executable
+      run: |
+        python3.11 -m PyInstaller --clean openbench_wizard.spec
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: OpenBench_Wizard_Linux_GLIBC2.31
         path: dist/OpenBench_Wizard
         retention-days: 30
 
   release:
-    needs: [build, build-linux]
+    needs: [build, build-linux-debian10, build-linux-ubuntu2004]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -120,8 +157,9 @@ jobs:
         cp artifacts/OpenBench_Wizard_Windows/OpenBench_Wizard.exe release/OpenBench_Wizard_Windows.exe
         cp artifacts/OpenBench_Wizard_macOS_Intel/OpenBench_Wizard release/OpenBench_Wizard_macOS_Intel
         cp artifacts/OpenBench_Wizard_macOS_ARM/OpenBench_Wizard release/OpenBench_Wizard_macOS_ARM
-        cp artifacts/OpenBench_Wizard_Linux/OpenBench_Wizard release/OpenBench_Wizard_Linux
-        chmod +x release/OpenBench_Wizard_macOS_Intel release/OpenBench_Wizard_macOS_ARM release/OpenBench_Wizard_Linux
+        cp artifacts/OpenBench_Wizard_Linux_GLIBC2.28/OpenBench_Wizard release/OpenBench_Wizard_Linux_GLIBC2.28
+        cp artifacts/OpenBench_Wizard_Linux_GLIBC2.31/OpenBench_Wizard release/OpenBench_Wizard_Linux_GLIBC2.31
+        chmod +x release/OpenBench_Wizard_macOS_Intel release/OpenBench_Wizard_macOS_ARM release/OpenBench_Wizard_Linux_*
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -130,7 +168,8 @@ jobs:
           release/OpenBench_Wizard_Windows.exe
           release/OpenBench_Wizard_macOS_Intel
           release/OpenBench_Wizard_macOS_ARM
-          release/OpenBench_Wizard_Linux
+          release/OpenBench_Wizard_Linux_GLIBC2.28
+          release/OpenBench_Wizard_Linux_GLIBC2.31
         draft: false
         prerelease: false
       env:
