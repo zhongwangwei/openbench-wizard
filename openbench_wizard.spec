@@ -1,39 +1,57 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for OpenBench Wizard
 
-import os
 import sys
-import PySide6
+import os
 
 block_cipher = None
 
-# Get PySide6 installation path for platform plugins
-pyside6_path = os.path.dirname(PySide6.__file__)
+# Get PySide6 path for platform-specific plugin collection
+import PySide6
+pyside6_dir = os.path.dirname(PySide6.__file__)
 
-# Platform-specific Qt plugins
-qt_plugins = []
-if sys.platform == 'darwin':
-    # macOS: cocoa plugin
-    qt_plugins = [
-        (os.path.join(pyside6_path, 'Qt', 'plugins', 'platforms'), 'PySide6/Qt/plugins/platforms'),
-        (os.path.join(pyside6_path, 'Qt', 'plugins', 'styles'), 'PySide6/Qt/plugins/styles'),
-    ]
-elif sys.platform == 'linux':
-    # Linux: xcb plugin
-    qt_plugins = [
-        (os.path.join(pyside6_path, 'Qt', 'plugins', 'platforms'), 'PySide6/Qt/plugins/platforms'),
-        (os.path.join(pyside6_path, 'Qt', 'plugins', 'xcbglintegrations'), 'PySide6/Qt/plugins/xcbglintegrations'),
-        (os.path.join(pyside6_path, 'Qt', 'plugins', 'platformthemes'), 'PySide6/Qt/plugins/platformthemes'),
-    ]
-elif sys.platform == 'win32':
-    # Windows: windows plugin
-    qt_plugins = [
-        (os.path.join(pyside6_path, 'plugins', 'platforms'), 'PySide6/plugins/platforms'),
-        (os.path.join(pyside6_path, 'plugins', 'styles'), 'PySide6/plugins/styles'),
-    ]
+# Collect only essential Qt plugins (platform + styles)
+binaries = []
+qt_plugins_datas = []
 
-# Filter out non-existent paths
-qt_plugins = [(src, dst) for src, dst in qt_plugins if os.path.exists(src)]
+if sys.platform == 'win32':
+    # Windows: plugins are in PySide6/plugins/
+    plugins_dir = os.path.join(pyside6_dir, 'plugins')
+    if os.path.exists(plugins_dir):
+        # Platform plugins (required)
+        platforms_dir = os.path.join(plugins_dir, 'platforms')
+        if os.path.exists(platforms_dir):
+            qt_plugins_datas.append((platforms_dir, 'PySide6/plugins/platforms'))
+        # Style plugins (optional but recommended)
+        styles_dir = os.path.join(plugins_dir, 'styles')
+        if os.path.exists(styles_dir):
+            qt_plugins_datas.append((styles_dir, 'PySide6/plugins/styles'))
+elif sys.platform == 'darwin':
+    # macOS: plugins are in PySide6/Qt/plugins/
+    plugins_dir = os.path.join(pyside6_dir, 'Qt', 'plugins')
+    if os.path.exists(plugins_dir):
+        platforms_dir = os.path.join(plugins_dir, 'platforms')
+        if os.path.exists(platforms_dir):
+            qt_plugins_datas.append((platforms_dir, 'PySide6/Qt/plugins/platforms'))
+        styles_dir = os.path.join(plugins_dir, 'styles')
+        if os.path.exists(styles_dir):
+            qt_plugins_datas.append((styles_dir, 'PySide6/Qt/plugins/styles'))
+else:
+    # Linux: plugins are in PySide6/Qt/plugins/
+    plugins_dir = os.path.join(pyside6_dir, 'Qt', 'plugins')
+    if os.path.exists(plugins_dir):
+        # Platform plugins (xcb for Linux)
+        platforms_dir = os.path.join(plugins_dir, 'platforms')
+        if os.path.exists(platforms_dir):
+            qt_plugins_datas.append((platforms_dir, 'PySide6/Qt/plugins/platforms'))
+        # XCB GL integrations (required for some Linux systems)
+        xcbgl_dir = os.path.join(plugins_dir, 'xcbglintegrations')
+        if os.path.exists(xcbgl_dir):
+            qt_plugins_datas.append((xcbgl_dir, 'PySide6/Qt/plugins/xcbglintegrations'))
+        # Platform themes
+        themes_dir = os.path.join(plugins_dir, 'platformthemes')
+        if os.path.exists(themes_dir):
+            qt_plugins_datas.append((themes_dir, 'PySide6/Qt/plugins/platformthemes'))
 
 # Explicit list of all hidden imports
 hidden_imports = [
@@ -78,7 +96,7 @@ hidden_imports = [
 # Data files to include
 datas = [
     ('ui/styles', 'ui/styles'),
-] + qt_plugins
+] + qt_plugins_datas
 
 a = Analysis(
     ['main.py'],
