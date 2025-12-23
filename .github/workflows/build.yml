@@ -18,7 +18,7 @@ jobs:
             artifact_name: OpenBench_Wizard.exe
             output_name: OpenBench_Wizard_Windows
           # macOS Intel (x86_64)
-          - os: macos-13
+          - os: macos-15-large
             artifact_name: OpenBench_Wizard
             output_name: OpenBench_Wizard_macOS_Intel
           # macOS Apple Silicon (ARM64)
@@ -54,11 +54,13 @@ jobs:
         path: dist/${{ matrix.artifact_name }}
         retention-days: 30
 
-  # Build for Linux using Debian 10 container (GLIBC 2.28 compatibility)
+  # Build for Linux using Ubuntu 20.04 container (GLIBC 2.31 compatibility)
   build-linux:
     runs-on: ubuntu-latest
     container:
-      image: debian:buster
+      image: ubuntu:20.04
+      env:
+        DEBIAN_FRONTEND: noninteractive
 
     steps:
     - name: Checkout code
@@ -67,29 +69,20 @@ jobs:
     - name: Install system dependencies
       run: |
         apt-get update
-        apt-get install -y wget build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev libffi-dev liblzma-dev
-        apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1-mesa libgl1-mesa-dev ca-certificates
-
-    - name: Install Python 3.11 from source
-      run: |
-        cd /tmp
-        wget https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz
-        tar -xf Python-3.11.9.tgz
-        cd Python-3.11.9
-        ./configure --enable-optimizations --prefix=/usr/local
-        make -j$(nproc)
-        make install
-        ln -sf /usr/local/bin/python3.11 /usr/local/bin/python3
-        ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip3
+        apt-get install -y software-properties-common
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update
+        apt-get install -y python3.11 python3.11-venv python3.11-dev python3-pip
+        apt-get install -y libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1-mesa-dev
 
     - name: Install Python dependencies
       run: |
-        /usr/local/bin/python3.11 -m pip install --upgrade pip
-        /usr/local/bin/python3.11 -m pip install pyinstaller pyside6 pyyaml psutil
+        python3.11 -m pip install --upgrade pip
+        python3.11 -m pip install pyinstaller pyside6 pyyaml psutil
 
     - name: Build executable
       run: |
-        /usr/local/bin/python3.11 -m PyInstaller --clean openbench_wizard.spec
+        python3.11 -m PyInstaller --clean openbench_wizard.spec
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
