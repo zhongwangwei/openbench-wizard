@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QPushButton, QGroupBox, QRadioButton, QButtonGroup,
-    QDialogButtonBox, QLabel, QMessageBox, QFileDialog
+    QDialogButtonBox, QLabel, QMessageBox, QFileDialog,
+    QCheckBox
 )
 from PySide6.QtCore import Qt
 
@@ -122,6 +123,34 @@ class DataSourceEditor(QDialog):
         self.radio_grid.toggled.connect(self._on_data_type_changed)
         self.radio_station.toggled.connect(self._on_data_type_changed)
 
+        # Model definition (for sim data) - add to basic settings
+        if self.source_type == "sim":
+            # Model definition with New and Show Variables buttons
+            model_row = QHBoxLayout()
+            self.model_nml = PathSelector(
+                mode="file",
+                filter="YAML Files (*.yaml)",
+                placeholder="Model definition file"
+            )
+            model_row.addWidget(self.model_nml, 1)
+
+            self.btn_new_model = QPushButton("New...")
+            self.btn_new_model.setFixedWidth(60)
+            self.btn_new_model.clicked.connect(self._create_new_model)
+            model_row.addWidget(self.btn_new_model)
+
+            self.btn_edit_model = QPushButton("Edit")
+            self.btn_edit_model.setFixedWidth(50)
+            self.btn_edit_model.setToolTip("Edit variables defined in the model file")
+            self.btn_edit_model.clicked.connect(self._edit_model_definition)
+            model_row.addWidget(self.btn_edit_model)
+
+            self.model_def_label = QLabel("Model Definition:")
+            basic_layout.addRow(self.model_def_label, model_row)
+
+            # Connect model path change to auto-populate variable defaults
+            self.model_nml.path_changed.connect(self._on_model_changed)
+
         layout.addWidget(basic_group)
 
         # === Time Settings ===
@@ -133,19 +162,33 @@ class DataSourceEditor(QDialog):
         self.tim_res_combo.addItems(["Month", "Day", "Hour", "Year"])
         time_layout.addRow("Time Resolution:", self.tim_res_combo)
 
+        # Per-variable time range checkbox
+        self.cb_per_var_time_range = QCheckBox("Use per-variable time range")
+        self.cb_per_var_time_range.setToolTip(
+            "When enabled, this variable uses its own start/end year settings.\n"
+            "When disabled, uses the Year Range from General Settings."
+        )
+        self.cb_per_var_time_range.stateChanged.connect(self._on_per_var_time_range_changed)
+        time_layout.addRow("", self.cb_per_var_time_range)
+
         # Year range (use QLineEdit to allow empty values for station data)
         year_layout = QHBoxLayout()
         self.syear_input = QLineEdit()
         self.syear_input.setPlaceholderText("Start year (e.g., 2000)")
         self.syear_input.setFixedWidth(120)
         year_layout.addWidget(self.syear_input)
-        year_layout.addWidget(QLabel("to"))
+        self.year_range_to_label = QLabel("to")
+        year_layout.addWidget(self.year_range_to_label)
         self.eyear_input = QLineEdit()
         self.eyear_input.setPlaceholderText("End year (e.g., 2020)")
         self.eyear_input.setFixedWidth(120)
         year_layout.addWidget(self.eyear_input)
         year_layout.addStretch()
-        time_layout.addRow("Year Range:", year_layout)
+        self.year_range_label = QLabel("Year Range:")
+        time_layout.addRow(self.year_range_label, year_layout)
+
+        # Initialize year range enabled state
+        self._update_year_range_enabled()
 
         # Timezone
         self.timezone_spin = QDoubleSpinBox()
@@ -211,53 +254,16 @@ class DataSourceEditor(QDialog):
             self.varunit_input.setPlaceholderText("Variable unit (from model definition)")
             var_layout.addRow("Variable Unit:", self.varunit_input)
 
-            layout.addWidget(var_group)
-
-            # File naming at general level (shared across variables)
-            naming_group = QGroupBox("File Naming (Shared)")
-            naming_layout = QFormLayout(naming_group)
-
+            # File naming (now in Variable Settings for sim data too)
             self.prefix_input = QLineEdit()
             self.prefix_input.setPlaceholderText("File prefix (e.g., Case01_hist_)")
-            naming_layout.addRow("File Prefix:", self.prefix_input)
+            var_layout.addRow("File Prefix:", self.prefix_input)
 
             self.suffix_input = QLineEdit()
             self.suffix_input.setPlaceholderText("File suffix (optional)")
-            naming_layout.addRow("File Suffix:", self.suffix_input)
+            var_layout.addRow("File Suffix:", self.suffix_input)
 
-            layout.addWidget(naming_group)
-
-        # === Simulation-specific: Model definition ===
-        if self.source_type == "sim":
-            model_group = QGroupBox("Model Settings")
-            model_layout = QFormLayout(model_group)
-
-            # Model definition with New and Show Variables buttons
-            model_row = QHBoxLayout()
-            self.model_nml = PathSelector(
-                mode="file",
-                filter="YAML Files (*.yaml)",
-                placeholder="Model definition file"
-            )
-            model_row.addWidget(self.model_nml, 1)
-
-            self.btn_new_model = QPushButton("New...")
-            self.btn_new_model.setFixedWidth(60)
-            self.btn_new_model.clicked.connect(self._create_new_model)
-            model_row.addWidget(self.btn_new_model)
-
-            self.btn_edit_model = QPushButton("Edit")
-            self.btn_edit_model.setFixedWidth(50)
-            self.btn_edit_model.setToolTip("Edit variables defined in the model file")
-            self.btn_edit_model.clicked.connect(self._edit_model_definition)
-            model_row.addWidget(self.btn_edit_model)
-
-            model_layout.addRow("Model Definition:", model_row)
-
-            # Connect model path change to auto-populate variable defaults
-            self.model_nml.path_changed.connect(self._on_model_changed)
-
-            layout.addWidget(model_group)
+            layout.addWidget(var_group)
 
         # === Dialog Buttons ===
         btn_box = QDialogButtonBox(
@@ -276,6 +282,30 @@ class DataSourceEditor(QDialog):
         # Show grid_res only for grid data
         self.grid_res_label.setVisible(not is_station)
         self.grid_res_input.setVisible(not is_station)
+
+    def _on_per_var_time_range_changed(self, state):
+        """Handle per-variable time range checkbox change."""
+        self._update_year_range_enabled()
+
+    def _update_year_range_enabled(self):
+        """Enable/disable year range inputs based on per_var_time_range checkbox.
+
+        When per-variable time range is enabled, these fields are editable.
+        When disabled, they are grayed out (controlled by general settings).
+        """
+        enabled = self.cb_per_var_time_range.isChecked()
+        self.syear_input.setEnabled(enabled)
+        self.eyear_input.setEnabled(enabled)
+        self.year_range_label.setEnabled(enabled)
+        self.year_range_to_label.setEnabled(enabled)
+
+        if not enabled:
+            tooltip = "Year Range is controlled by General Settings.\nCheck 'Use per-variable time range' above to set custom year range."
+            self.syear_input.setToolTip(tooltip)
+            self.eyear_input.setToolTip(tooltip)
+        else:
+            self.syear_input.setToolTip("Start year for this variable")
+            self.eyear_input.setToolTip("End year for this variable")
 
     def _load_data(self):
         """Load initial data into form.
@@ -313,6 +343,11 @@ class DataSourceEditor(QDialog):
             idx = self.tim_res_combo.findText(general["tim_res"], Qt.MatchFixedString)
             if idx >= 0:
                 self.tim_res_combo.setCurrentIndex(idx)
+
+        # Load per-variable time range setting
+        if "per_var_time_range" in general:
+            self.cb_per_var_time_range.setChecked(general["per_var_time_range"])
+            self._update_year_range_enabled()
 
         if "syear" in general:
             self.syear_input.setText(str(general["syear"]))
@@ -633,6 +668,7 @@ class DataSourceEditor(QDialog):
             "data_groupby": self.groupby_combo.currentText(),
             "tim_res": self.tim_res_combo.currentText(),
             "timezone": self.timezone_spin.value(),
+            "per_var_time_range": self.cb_per_var_time_range.isChecked(),
         }
         if self.source_type == "sim":
             general["dir"] = root_dir
@@ -687,13 +723,6 @@ class DataSourceEditor(QDialog):
             data["prefix"] = self.prefix_input.text()
         if self.suffix_input.text():
             data["suffix"] = self.suffix_input.text()
-
-        # For sim data: also store prefix/suffix in general section (for backward compatibility)
-        if self.source_type == "sim":
-            if self.prefix_input.text():
-                general["prefix"] = self.prefix_input.text()
-            if self.suffix_input.text():
-                general["suffix"] = self.suffix_input.text()
 
         # Add model definition for sim - convert to absolute
         if self.source_type == "sim":
