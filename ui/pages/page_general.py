@@ -53,12 +53,14 @@ class PageGeneral(BasePage):
         st_layout = QGridLayout(st_group)
 
         # Year range
-        st_layout.addWidget(QLabel("Year Range:"), 0, 0)
+        self.year_range_label = QLabel("Year Range:")
+        st_layout.addWidget(self.year_range_label, 0, 0)
         self.syear_spin = QSpinBox()
         self.syear_spin.setRange(1900, 2100)
         self.syear_spin.setValue(2000)
         st_layout.addWidget(self.syear_spin, 0, 1)
-        st_layout.addWidget(QLabel("to"), 0, 2)
+        self.year_range_to_label = QLabel("to")
+        st_layout.addWidget(self.year_range_to_label, 0, 2)
         self.eyear_spin = QSpinBox()
         self.eyear_spin.setRange(1900, 2100)
         self.eyear_spin.setValue(2020)
@@ -200,6 +202,42 @@ class PageGeneral(BasePage):
     def _on_toggle_changed(self, state):
         """Handle feature toggle changes."""
         self.save_to_config()
+
+    def _has_per_var_time_range(self) -> bool:
+        """Check if any source has per_var_time_range enabled."""
+        # Check ref_data source_configs
+        ref_source_configs = self.controller.config.get("ref_data", {}).get("source_configs", {})
+        for source_config in ref_source_configs.values():
+            general = source_config.get("general", {})
+            if general.get("per_var_time_range", False):
+                return True
+
+        # Check sim_data source_configs
+        sim_source_configs = self.controller.config.get("sim_data", {}).get("source_configs", {})
+        for source_config in sim_source_configs.values():
+            general = source_config.get("general", {})
+            if general.get("per_var_time_range", False):
+                return True
+
+        return False
+
+    def update_year_range_state(self):
+        """Update Year Range enabled state based on per_var_time_range settings."""
+        has_per_var = self._has_per_var_time_range()
+        enabled = not has_per_var
+
+        self.syear_spin.setEnabled(enabled)
+        self.eyear_spin.setEnabled(enabled)
+        self.year_range_label.setEnabled(enabled)
+        self.year_range_to_label.setEnabled(enabled)
+
+        if not enabled:
+            tooltip = "Year Range is controlled per-variable in Reference Data or Simulation Data sources."
+            self.syear_spin.setToolTip(tooltip)
+            self.eyear_spin.setToolTip(tooltip)
+        else:
+            self.syear_spin.setToolTip("")
+            self.eyear_spin.setToolTip("")
 
     def _on_project_name_changed(self, text):
         """Handle project name changes.
@@ -348,6 +386,9 @@ class PageGeneral(BasePage):
         idx = self.weight_combo.findText(display_weight)
         if idx >= 0:
             self.weight_combo.setCurrentIndex(idx)
+
+        # Update Year Range state based on per_var_time_range settings
+        self.update_year_range_state()
 
     def _save_to_config_no_sync(self):
         """Save settings to controller config WITHOUT triggering sync_namelists.

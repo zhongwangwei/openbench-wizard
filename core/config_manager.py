@@ -116,14 +116,15 @@ class ConfigManager:
         # Because OpenBench computes output path as: basedir/basename
         parent_dir = os.path.dirname(output_dir.rstrip(os.sep))
 
+        # Check if any source has per_var_time_range enabled
+        use_per_var_time_range = self._has_per_var_time_range(config)
+
         main_config["general"] = {
             "basename": basename,
             "basedir": parent_dir,
             "compare_tim_res": general.get("compare_tim_res", "month"),
             "compare_tzone": general.get("compare_tzone", 0.0),
             "compare_grid_res": general.get("compare_grid_res", 2.0),
-            "syear": general.get("syear", 2000),
-            "eyear": general.get("eyear", 2020),
             "min_year": general.get("min_year", 1.0),
             "max_lat": general.get("max_lat", 90.0),
             "min_lat": general.get("min_lat", -90.0),
@@ -146,6 +147,11 @@ class ConfigManager:
             "unified_mask": general.get("unified_mask", True),
             "generate_report": general.get("generate_report", True),
         }
+
+        # Only include syear/eyear in main config when per-variable time range is NOT enabled
+        if not use_per_var_time_range:
+            main_config["general"]["syear"] = general.get("syear", 2000)
+            main_config["general"]["eyear"] = general.get("eyear", 2020)
 
         # Evaluation items
         main_config["evaluation_items"] = config.get("evaluation_items", {})
@@ -458,14 +464,24 @@ class ConfigManager:
                 var_name, source_name = key.split("::", 1)
                 if source_name not in organized_configs:
                     organized_configs[source_name] = {}
-                # Store general section (shared)
-                if "general" in config:
-                    organized_configs[source_name]["_general"] = config["general"]
+                # Store general section (shared) - but use the first one, don't overwrite
+                if "general" in config and "_general" not in organized_configs[source_name]:
+                    organized_configs[source_name]["_general"] = config["general"].copy()
                 # Store var-specific config
                 var_config = {}
                 for field in ["sub_dir", "varname", "varunit", "prefix", "suffix"]:
                     if field in config:
                         var_config[field] = config[field]
+
+                # Store per-variable time range settings for this specific variable
+                general = config.get("general", {})
+                if general.get("per_var_time_range"):
+                    var_config["per_var_time_range"] = True
+                    if "syear" in general and general["syear"] != "":
+                        var_config["syear"] = general["syear"]
+                    if "eyear" in general and general["eyear"] != "":
+                        var_config["eyear"] = general["eyear"]
+
                 if var_config:
                     organized_configs[source_name][var_name] = var_config
             else:
@@ -637,13 +653,33 @@ class ConfigManager:
                 dest_dir = os.path.dirname(dest_path)
                 general["model_namelist"] = os.path.join(dest_dir, model_basename + ".yaml")
 
+            # Remove UI-only field from output
+            general.pop("per_var_time_range", None)
+
+            # Check if any variable has per_var_time_range enabled
+            any_per_var = any(
+                organized_data.get(item, {}).get("per_var_time_range", False)
+                for item in selected_items
+            )
+
+            # If any variable uses per-variable time range, remove from general
+            if any_per_var:
+                general.pop("syear", None)
+                general.pop("eyear", None)
+
             filtered["general"] = general
 
         # Process per-variable configurations
         for item in selected_items:
             if item in organized_data:
                 # Use the specific config for this variable
-                filtered[item] = organized_data[item].copy()
+                var_config = organized_data[item].copy()
+
+                # Remove per_var_time_range from output (it's only for UI control)
+                var_config.pop("per_var_time_range", None)
+
+                if var_config:  # Only add if there's data
+                    filtered[item] = var_config
 
         # Write the file
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -950,3 +986,29 @@ class ConfigManager:
                     source_name = filename[:-5]  # Remove .yaml
                     if source_name not in ref_sources:
                         os.remove(os.path.join(ref_nml_dir, filename))
+
+    def _has_per_var_time_range(self, config: Dict[str, Any]) -> bool:
+        """
+        Check if any source has per_var_time_range enabled.
+
+        Args:
+            config: Configuration dictionary
+
+        Returns:
+            True if any source has per_var_time_range enabled
+        """
+        # Check ref_data source_configs
+        ref_source_configs = config.get("ref_data", {}).get("source_configs", {})
+        for source_config in ref_source_configs.values():
+            general = source_config.get("general", {})
+            if general.get("per_var_time_range", False):
+                return True
+
+        # Check sim_data source_configs
+        sim_source_configs = config.get("sim_data", {}).get("source_configs", {})
+        for source_config in sim_source_configs.values():
+            general = source_config.get("general", {})
+            if general.get("per_var_time_range", False):
+                return True
+
+        return False
