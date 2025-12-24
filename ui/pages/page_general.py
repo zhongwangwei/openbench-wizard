@@ -58,12 +58,14 @@ class PageGeneral(BasePage):
         self.syear_spin = QSpinBox()
         self.syear_spin.setRange(1900, 2100)
         self.syear_spin.setValue(2000)
+        self.syear_spin.valueChanged.connect(self._on_year_range_changed)
         st_layout.addWidget(self.syear_spin, 0, 1)
         self.year_range_to_label = QLabel("to")
         st_layout.addWidget(self.year_range_to_label, 0, 2)
         self.eyear_spin = QSpinBox()
         self.eyear_spin.setRange(1900, 2100)
         self.eyear_spin.setValue(2020)
+        self.eyear_spin.valueChanged.connect(self._on_year_range_changed)
         st_layout.addWidget(self.eyear_spin, 0, 3)
 
         # Minimum year threshold
@@ -203,6 +205,11 @@ class PageGeneral(BasePage):
         """Handle feature toggle changes."""
         self.save_to_config()
 
+    def _on_year_range_changed(self, value):
+        """Handle year range changes - save and sync namelists."""
+        self.save_to_config()
+        self.controller.sync_namelists()
+
     def _has_per_var_time_range(self) -> bool:
         """Check if any source has per_var_time_range enabled."""
         # Check ref_data source_configs
@@ -222,17 +229,15 @@ class PageGeneral(BasePage):
         return False
 
     def update_year_range_state(self):
-        """Update Year Range enabled state based on per_var_time_range settings."""
+        """Update Year Range tooltip based on per_var_time_range settings.
+
+        Year Range is always editable. When per-variable time range is enabled
+        on any source, these values are used as defaults but may be overridden.
+        """
         has_per_var = self._has_per_var_time_range()
-        enabled = not has_per_var
 
-        self.syear_spin.setEnabled(enabled)
-        self.eyear_spin.setEnabled(enabled)
-        self.year_range_label.setEnabled(enabled)
-        self.year_range_to_label.setEnabled(enabled)
-
-        if not enabled:
-            tooltip = "Year Range is controlled per-variable in Reference Data or Simulation Data sources."
+        if has_per_var:
+            tooltip = "Some sources use per-variable time range. This value is used for sources without per-variable settings."
             self.syear_spin.setToolTip(tooltip)
             self.eyear_spin.setToolTip(tooltip)
         else:

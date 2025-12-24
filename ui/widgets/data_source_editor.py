@@ -188,7 +188,7 @@ class DataSourceEditor(QDialog):
         time_layout.addRow(self.year_range_label, year_layout)
 
         # Initialize year range enabled state
-        self._update_year_range_enabled()
+        self._update_year_range_tooltip()
 
         # Timezone
         self.timezone_spin = QDoubleSpinBox()
@@ -285,27 +285,22 @@ class DataSourceEditor(QDialog):
 
     def _on_per_var_time_range_changed(self, state):
         """Handle per-variable time range checkbox change."""
-        self._update_year_range_enabled()
+        self._update_year_range_tooltip()
 
-    def _update_year_range_enabled(self):
-        """Enable/disable year range inputs based on per_var_time_range checkbox.
+    def _update_year_range_tooltip(self):
+        """Update year range tooltip based on per_var_time_range checkbox.
 
-        When per-variable time range is enabled, these fields are editable.
-        When disabled, they are grayed out (controlled by general settings).
+        Year range fields are always editable.
+        When per-variable time range is enabled, values go to per-variable section in namelist.
+        When disabled, values are ignored and General Settings values are used.
         """
-        enabled = self.cb_per_var_time_range.isChecked()
-        self.syear_input.setEnabled(enabled)
-        self.eyear_input.setEnabled(enabled)
-        self.year_range_label.setEnabled(enabled)
-        self.year_range_to_label.setEnabled(enabled)
-
-        if not enabled:
-            tooltip = "Year Range is controlled by General Settings.\nCheck 'Use per-variable time range' above to set custom year range."
+        if not self.cb_per_var_time_range.isChecked():
+            tooltip = "When 'Use per-variable time range' is unchecked, this value is ignored.\nGeneral Settings Year Range will be used instead."
             self.syear_input.setToolTip(tooltip)
             self.eyear_input.setToolTip(tooltip)
         else:
-            self.syear_input.setToolTip("Start year for this variable")
-            self.eyear_input.setToolTip("End year for this variable")
+            self.syear_input.setToolTip("Start year for this variable (will be in namelist)")
+            self.eyear_input.setToolTip("End year for this variable (will be in namelist)")
 
     def _load_data(self):
         """Load initial data into form.
@@ -347,7 +342,7 @@ class DataSourceEditor(QDialog):
         # Load per-variable time range setting
         if "per_var_time_range" in general:
             self.cb_per_var_time_range.setChecked(general["per_var_time_range"])
-            self._update_year_range_enabled()
+            self._update_year_range_tooltip()
 
         if "syear" in general:
             self.syear_input.setText(str(general["syear"]))

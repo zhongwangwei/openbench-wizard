@@ -116,15 +116,14 @@ class ConfigManager:
         # Because OpenBench computes output path as: basedir/basename
         parent_dir = os.path.dirname(output_dir.rstrip(os.sep))
 
-        # Check if any source has per_var_time_range enabled
-        use_per_var_time_range = self._has_per_var_time_range(config)
-
         main_config["general"] = {
             "basename": basename,
             "basedir": parent_dir,
             "compare_tim_res": general.get("compare_tim_res", "month"),
             "compare_tzone": general.get("compare_tzone", 0.0),
             "compare_grid_res": general.get("compare_grid_res", 2.0),
+            "syear": general.get("syear", 2000),
+            "eyear": general.get("eyear", 2020),
             "min_year": general.get("min_year", 1.0),
             "max_lat": general.get("max_lat", 90.0),
             "min_lat": general.get("min_lat", -90.0),
@@ -147,11 +146,6 @@ class ConfigManager:
             "unified_mask": general.get("unified_mask", True),
             "generate_report": general.get("generate_report", True),
         }
-
-        # Only include syear/eyear in main config when per-variable time range is NOT enabled
-        if not use_per_var_time_range:
-            main_config["general"]["syear"] = general.get("syear", 2000)
-            main_config["general"]["eyear"] = general.get("eyear", 2020)
 
         # Evaluation items
         main_config["evaluation_items"] = config.get("evaluation_items", {})
