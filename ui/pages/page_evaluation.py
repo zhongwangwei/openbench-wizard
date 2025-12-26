@@ -86,3 +86,23 @@ class PageEvaluation(BasePage):
 
         # Trigger namelist sync (evaluation items affect filtering)
         self.controller.sync_namelists()
+
+    def validate(self) -> bool:
+        """Validate page input."""
+        from core.validation import FieldValidator, ValidationManager
+
+        selection = self.checkbox_group.get_selection()
+        error = FieldValidator.selection_required(
+            selection,
+            "evaluation_items",
+            "请至少选择一个评估项目",
+            page_id=self.PAGE_ID
+        )
+
+        if error:
+            manager = ValidationManager(self)
+            manager.show_error_and_focus(error)
+            return False
+
+        self.save_to_config()
+        return True
