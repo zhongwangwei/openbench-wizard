@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Run and Monitor page with progress dashboard.
+
+Supports both local and remote execution modes:
+- Local: Uses EvaluationRunner to run OpenBench on the local machine
+- Remote: Uses RemoteRunner to execute OpenBench on a remote server via SSH
 """
 
 import os
@@ -12,6 +16,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 from ui.pages.base_page import BasePage
 from ui.widgets import ProgressDashboard, TaskStatus
 from core.runner import EvaluationRunner, RunnerStatus
+from core.remote_runner import RemoteRunner
 
 
 class PageRunMonitor(BasePage):
@@ -45,7 +50,15 @@ class PageRunMonitor(BasePage):
         self.content_layout.addWidget(self.dashboard, 1)
 
     def start_run(self, config_path: str):
-        """Start evaluation run."""
+        """Start evaluation run.
+
+        Supports both local and remote execution based on execution_mode in config.
+        - Local mode: Uses EvaluationRunner to run OpenBench locally
+        - Remote mode: Uses RemoteRunner to execute via SSH on a remote server
+
+        Args:
+            config_path: Path to the exported OpenBench configuration file
+        """
         if self._runner and self._runner.isRunning():
             QMessageBox.warning(
                 self,
@@ -109,11 +122,22 @@ class PageRunMonitor(BasePage):
         comparisons = config.get("comparisons", {})
         num_comparisons = len([k for k, v in comparisons.items() if v])
 
-        # Get Python path from config
-        python_path = general.get("python_path", "")
+        # Check execution mode and create appropriate runner
+        execution_mode = general.get("execution_mode", "local")
 
-        # Create and start runner
-        self._runner = EvaluationRunner(config_path, python_path, self)
+        if execution_mode == "remote":
+            # Remote execution mode
+            self._runner = self._create_remote_runner(config_path, general)
+            if self._runner is None:
+                # Error creating remote runner - message already shown
+                self.dashboard.stop_monitoring()
+                return
+        else:
+            # Local execution mode (default)
+            python_path = general.get("python_path", "")
+            self._runner = EvaluationRunner(config_path, python_path, self)
+
+        # Configure task counts for accurate progress tracking
         self._runner.set_task_counts(
             num_variables=num_variables,
             num_ref_sources=num_ref_sources,
@@ -126,10 +150,112 @@ class PageRunMonitor(BasePage):
             do_comparison=general.get("comparison", False),
             do_statistics=general.get("statistics", False)
         )
+
+        # Connect signals - same interface for both runners
         self._runner.progress_updated.connect(self._on_progress)
         self._runner.log_message.connect(self._on_log)
         self._runner.finished_signal.connect(self._on_finished)
         self._runner.start()
+
+    def _create_remote_runner(self, config_path: str, general: dict):
+        """Create a RemoteRunner for SSH-based execution.
+
+        Args:
+            config_path: Path to the exported OpenBench configuration file
+            general: General configuration dictionary
+
+        Returns:
+            RemoteRunner instance, or None if SSH connection not available
+        """
+        # Get remote configuration
+        remote_config = general.get("remote", {})
+
+        if not remote_config:
+            QMessageBox.critical(
+                self,
+                "Remote Configuration Missing",
+                "Remote execution is enabled but no remote server is configured.\n\n"
+                "Please configure a remote server in General Settings."
+            )
+            return None
+
+        # Get SSH manager from the remote config widget via controller
+        # The controller has access to pages through the main window
+        ssh_manager = self._get_ssh_manager()
+
+        if ssh_manager is None or not ssh_manager.is_connected:
+            QMessageBox.critical(
+                self,
+                "SSH Connection Required",
+                "Remote execution requires an active SSH connection.\n\n"
+                "Please:\n"
+                "1. Go to General Settings\n"
+                "2. Configure the remote server\n"
+                "3. Click 'Test' to establish the connection\n"
+                "4. Then return here and click Run again"
+            )
+            return None
+
+        # Validate remote configuration
+        python_path = remote_config.get("python_path", "")
+        openbench_path = remote_config.get("openbench_path", "")
+
+        if not python_path:
+            QMessageBox.critical(
+                self,
+                "Remote Python Not Configured",
+                "Remote Python path is not configured.\n\n"
+                "Please configure the Python path in General Settings > Remote Python Environment."
+            )
+            return None
+
+        if not openbench_path:
+            QMessageBox.critical(
+                self,
+                "Remote OpenBench Not Configured",
+                "Remote OpenBench path is not configured.\n\n"
+                "Please configure the OpenBench path in General Settings > Remote Python Environment."
+            )
+            return None
+
+        # Create and return the RemoteRunner
+        return RemoteRunner(config_path, ssh_manager, remote_config, self)
+
+    def _get_ssh_manager(self):
+        """Get the SSH manager from the General Settings page.
+
+        The SSH manager is held by the RemoteConfigWidget in the General Settings page.
+        We access it through the controller's parent (MainWindow) which holds all pages.
+
+        Returns:
+            SSHManager instance if available and connected, None otherwise
+        """
+        try:
+            # Access the main window through the controller's parent
+            # The controller is created by MainWindow with 'self' as parent
+            main_window = self.controller.parent()
+            if main_window is None:
+                return None
+
+            # Get the pages dictionary from the main window
+            pages = getattr(main_window, "pages", None)
+            if pages is None:
+                return None
+
+            # Get the general page which contains the remote config widget
+            general_page = pages.get("general")
+            if general_page is None:
+                return None
+
+            # The remote config widget is a child of the general page
+            remote_config_widget = getattr(general_page, "remote_config_widget", None)
+            if remote_config_widget is None:
+                return None
+
+            # Get the SSH manager from the remote config widget
+            return remote_config_widget.get_ssh_manager()
+        except Exception:
+            return None
 
     def _on_progress(self, progress):
         """Handle progress update."""
