@@ -116,3 +116,33 @@ class TestFieldValidatorPathExists:
                 assert error is None
             finally:
                 os.unlink(f.name)
+
+
+class TestFieldValidatorNumberRange:
+    """Test FieldValidator.number_range method."""
+
+    def test_number_in_range(self):
+        """Test number in valid range."""
+        error = FieldValidator.number_range(45.0, -90.0, 90.0, "latitude", "纬度范围无效")
+        assert error is None
+
+    def test_number_at_min_boundary(self):
+        """Test number at minimum boundary."""
+        error = FieldValidator.number_range(-90.0, -90.0, 90.0, "latitude", "纬度范围无效")
+        assert error is None
+
+    def test_number_at_max_boundary(self):
+        """Test number at maximum boundary."""
+        error = FieldValidator.number_range(90.0, -90.0, 90.0, "latitude", "纬度范围无效")
+        assert error is None
+
+    def test_number_below_min(self):
+        """Test number below minimum fails."""
+        error = FieldValidator.number_range(-100.0, -90.0, 90.0, "latitude", "纬度范围无效（-90 到 90）")
+        assert error is not None
+        assert "纬度范围无效" in error.message
+
+    def test_number_above_max(self):
+        """Test number above maximum fails."""
+        error = FieldValidator.number_range(100.0, -90.0, 90.0, "latitude", "纬度范围无效（-90 到 90）")
+        assert error is not None

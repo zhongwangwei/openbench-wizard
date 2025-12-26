@@ -93,3 +93,32 @@ class FieldValidator:
             return ValidationError(field_name, full_message, page_id, widget)
 
         return None
+
+    @staticmethod
+    def number_range(
+        value: float,
+        min_val: float,
+        max_val: float,
+        field_name: str,
+        message: str,
+        page_id: str = "",
+        widget: QWidget = None
+    ) -> Optional[ValidationError]:
+        """
+        Validate that a number is within a range.
+
+        Args:
+            value: Number to validate
+            min_val: Minimum allowed value (inclusive)
+            max_val: Maximum allowed value (inclusive)
+            field_name: Name of the field
+            message: Error message if validation fails
+            page_id: Page ID for error context
+            widget: Widget to focus on error
+
+        Returns:
+            ValidationError if invalid, None if valid
+        """
+        if value < min_val or value > max_val:
+            return ValidationError(field_name, message, page_id, widget)
+        return None
