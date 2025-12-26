@@ -3,6 +3,7 @@
 Dialog for editing data source configuration.
 """
 
+import logging
 from typing import Dict, Any, Optional
 
 from PySide6.QtWidgets import (
@@ -15,7 +16,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from ui.widgets.path_selector import PathSelector
+from ui.widgets.remote_config import RemoteFileBrowser
 from core.path_utils import to_absolute_path, validate_path, get_openbench_root
+from core.validation import ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 class DataSourceEditor(QDialog):
@@ -36,6 +41,7 @@ class DataSourceEditor(QDialog):
         source_type: str = "ref",  # "ref" or "sim"
         var_name: str = "",  # Variable name (for ref data context)
         initial_data: Optional[Dict[str, Any]] = None,
+        ssh_manager=None,  # SSH manager for remote browsing
         parent=None
     ):
         super().__init__(parent)
@@ -43,6 +49,7 @@ class DataSourceEditor(QDialog):
         self.source_type = source_type
         self.var_name = var_name
         self.initial_data = initial_data or {}
+        self._ssh_manager = ssh_manager
 
         # Build title with context
         if source_name and var_name:
@@ -58,8 +65,52 @@ class DataSourceEditor(QDialog):
         self.setModal(True)
 
         self._setup_ui()
+        self._setup_remote_browsing()  # Setup remote browsing if ssh_manager provided
         self._on_data_type_changed()  # Initial show/hide
         self._load_data()
+
+    def _is_remote_mode(self) -> bool:
+        """Check if we're in remote mode (SSH manager is set)."""
+        return self._ssh_manager is not None
+
+    def _get_remote_project_root(self) -> str:
+        """Get the remote project root from the parent widget chain."""
+        try:
+            # Try to get controller from parent widget chain
+            parent = self.parent()
+            while parent:
+                if hasattr(parent, 'controller'):
+                    return parent.controller.project_root or ""
+                parent = parent.parent()
+        except Exception as e:
+            logger.debug("Failed to get remote project root: %s", e)
+        return ""
+
+    def _convert_path(self, path: str) -> str:
+        """Convert relative path to absolute path.
+
+        In remote mode, relative paths are converted using remote project root.
+        In local mode, relative paths are converted using local openbench_root.
+        """
+        if not path:
+            return path
+
+        # Check if already absolute
+        if path.startswith('/'):
+            return path
+
+        if self._is_remote_mode():
+            # Remote mode: convert relative to absolute using remote project root
+            project_root = self._get_remote_project_root()
+            if project_root:
+                # Handle ./ prefix
+                if path.startswith('./'):
+                    path = path[2:]
+                return f"{project_root.rstrip('/')}/{path}"
+            return path
+        else:
+            # Local mode: convert to absolute path
+            return to_absolute_path(path, get_openbench_root())
 
     def _setup_ui(self):
         """Setup dialog UI."""
@@ -273,6 +324,58 @@ class DataSourceEditor(QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
 
+    def _setup_remote_browsing(self):
+        """Setup remote browsing for PathSelector widgets if ssh_manager is provided."""
+        if not self._ssh_manager:
+            return
+
+        # Set custom browse handlers for PathSelector widgets
+        self.root_dir.set_custom_browse_handler(
+            lambda: self._browse_remote_path(self.root_dir, "directory")
+        )
+        self.fulllist.set_custom_browse_handler(
+            lambda: self._browse_remote_path(self.fulllist, "file")
+        )
+
+    def _browse_remote_path(self, path_selector, mode: str):
+        """Browse remote server for path."""
+        if not self._ssh_manager or not self._ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Not Connected",
+                "Remote server is not connected."
+            )
+            return
+
+        # Get start path
+        current_path = path_selector.path()
+        if current_path:
+            start_path = current_path if mode == "directory" else current_path.rsplit('/', 1)[0]
+        else:
+            try:
+                start_path = self._ssh_manager._get_home_dir()
+            except Exception as e:
+                logger.debug("Failed to get remote home directory: %s", e)
+                start_path = "/"
+
+        # Create dialog with remote file browser
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Select {'Directory' if mode == 'directory' else 'File'} on Remote Server")
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+        browser = RemoteFileBrowser(
+            self._ssh_manager, start_path, dialog,
+            select_dirs=(mode == "directory")
+        )
+        layout.addWidget(browser)
+
+        def on_path_selected(path):
+            path_selector.set_path(path)
+            dialog.accept()
+
+        browser.file_selected.connect(on_path_selected)
+        dialog.exec_()
+
     def _on_data_type_changed(self):
         """Show/hide fields based on data type selection."""
         is_station = self.radio_station.isChecked()
@@ -313,12 +416,11 @@ class DataSourceEditor(QDialog):
             return
 
         general = data.get("general", data)
-        openbench_root = get_openbench_root()
 
         # Handle both "root_dir" (ref) and "dir" (sim) field names
         root_dir_value = general.get("root_dir") or general.get("dir", "")
         if root_dir_value:
-            root_dir_value = to_absolute_path(root_dir_value, openbench_root)
+            root_dir_value = self._convert_path(root_dir_value)
             self.root_dir.set_path(root_dir_value)
 
         if "data_type" in general:
@@ -344,9 +446,14 @@ class DataSourceEditor(QDialog):
             self.cb_per_var_time_range.setChecked(general["per_var_time_range"])
             self._update_year_range_tooltip()
 
-        if "syear" in general:
+        # Load syear/eyear - check top level first (variable-specific), then general section
+        if "syear" in data:
+            self.syear_input.setText(str(data["syear"]))
+        elif "syear" in general:
             self.syear_input.setText(str(general["syear"]))
-        if "eyear" in general:
+        if "eyear" in data:
+            self.eyear_input.setText(str(data["eyear"]))
+        elif "eyear" in general:
             self.eyear_input.setText(str(general["eyear"]))
         if "timezone" in general:
             try:
@@ -356,10 +463,10 @@ class DataSourceEditor(QDialog):
         if "grid_res" in general:
             self.grid_res_input.setText(str(general["grid_res"]))
         if "fulllist" in general:
-            # Convert fulllist to absolute path when loading
+            # Convert fulllist to absolute path when loading (only in local mode)
             fulllist = general["fulllist"]
             if fulllist:
-                fulllist = to_absolute_path(fulllist, openbench_root)
+                fulllist = self._convert_path(fulllist)
             self.fulllist.set_path(fulllist)
 
         # Load variable mapping fields (for both ref and sim)
@@ -381,11 +488,11 @@ class DataSourceEditor(QDialog):
         elif "suffix" in general:
             self.suffix_input.setText(str(general["suffix"]))
 
-        # Model definition for sim - convert to absolute path
+        # Model definition for sim - convert to absolute path (only in local mode)
         if self.source_type == "sim" and "model_namelist" in general:
             model_nml = general["model_namelist"]
             if model_nml:
-                model_nml = to_absolute_path(model_nml, openbench_root)
+                model_nml = self._convert_path(model_nml)
             self.model_nml.set_path(model_nml)
 
     def _load_from_file(self):
@@ -421,6 +528,10 @@ class DataSourceEditor(QDialog):
         """Open file dialog to select a YAML file. Returns file path or empty string."""
         import os
 
+        if self._ssh_manager and self._ssh_manager.is_connected:
+            # Use remote file browser
+            return self._prompt_for_remote_yaml_file()
+
         openbench_root = get_openbench_root()
         default_dir = os.path.join(openbench_root, "nml", "nml-yaml")
 
@@ -441,9 +552,52 @@ class DataSourceEditor(QDialog):
         )
         return file_path
 
+    def _prompt_for_remote_yaml_file(self) -> str:
+        """Open remote file browser to select a YAML file."""
+        # Get OpenBench path from remote config or use home
+        try:
+            home = self._ssh_manager._get_home_dir()
+            # Try to find OpenBench nml directory
+            stdout, stderr, exit_code = self._ssh_manager.execute(
+                f"ls -d {home}/OpenBench/nml/nml-yaml 2>/dev/null || echo {home}",
+                timeout=10
+            )
+            start_path = stdout.strip() if exit_code == 0 else home
+        except Exception as e:
+            logger.debug("Failed to get remote OpenBench path: %s", e)
+            start_path = "/"
+
+        # Create dialog with remote file browser
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Load Configuration from Remote YAML File")
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+        browser = RemoteFileBrowser(self._ssh_manager, start_path, dialog, select_dirs=False)
+        layout.addWidget(browser)
+
+        selected_path = [None]  # Use list to capture value from inner function
+
+        def on_path_selected(path):
+            # Only accept yaml/yml files
+            if path.endswith('.yaml') or path.endswith('.yml'):
+                selected_path[0] = path
+                dialog.accept()
+            else:
+                QMessageBox.warning(dialog, "Invalid File", "Please select a YAML file (.yaml or .yml)")
+
+        browser.file_selected.connect(on_path_selected)
+        dialog.exec_()
+
+        return selected_path[0] or ""
+
     def _load_yaml_content(self, file_path: str) -> dict:
         """Load and parse YAML file. Returns content dict or None on error."""
         import yaml
+
+        if self._ssh_manager and self._ssh_manager.is_connected:
+            # Load from remote file
+            return self._load_remote_yaml_content(file_path)
 
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -455,14 +609,34 @@ class DataSourceEditor(QDialog):
             )
             return None
 
+    def _load_remote_yaml_content(self, file_path: str) -> dict:
+        """Load and parse YAML file from remote server."""
+        import yaml
+
+        try:
+            stdout, stderr, exit_code = self._ssh_manager.execute(
+                f"cat '{file_path}'", timeout=30
+            )
+            if exit_code != 0:
+                QMessageBox.warning(
+                    self, "Load Error",
+                    f"Failed to load remote file:\n{file_path}\n\nError: {stderr}"
+                )
+                return None
+            return yaml.safe_load(stdout) or {}
+        except Exception as e:
+            QMessageBox.warning(
+                self, "Load Error",
+                f"Failed to load remote file:\n{file_path}\n\nError: {str(e)}"
+            )
+            return None
+
     def _populate_general_settings(self, general: dict):
         """Populate form fields from general section of config."""
-        openbench_root = get_openbench_root()
-
         # Root directory
         root_dir = general.get("root_dir") or general.get("dir", "")
         if root_dir:
-            root_dir = to_absolute_path(root_dir, openbench_root)
+            root_dir = self._convert_path(root_dir)
             self.root_dir.set_path(root_dir)
 
         # Data type
@@ -497,16 +671,14 @@ class DataSourceEditor(QDialog):
         if "grid_res" in general:
             self.grid_res_input.setText(str(general["grid_res"]))
         if "fulllist" in general and general["fulllist"]:
-            self.fulllist.set_path(to_absolute_path(general["fulllist"], openbench_root))
+            self.fulllist.set_path(self._convert_path(general["fulllist"]))
 
     def _populate_variable_settings(self, content: dict, general: dict):
         """Populate variable-specific settings based on source type."""
-        openbench_root = get_openbench_root()
-
         if self.source_type == "ref":
             self._populate_ref_variable_settings(content)
         else:
-            self._populate_sim_variable_settings(content, general, openbench_root)
+            self._populate_sim_variable_settings(content, general)
 
     def _populate_ref_variable_settings(self, content: dict):
         """Populate reference data variable-specific fields."""
@@ -536,8 +708,13 @@ class DataSourceEditor(QDialog):
                 self.prefix_input.setText(str(var_config["prefix"]))
             if "suffix" in var_config:
                 self.suffix_input.setText(str(var_config["suffix"]))
+            # Load variable-specific syear/eyear (for per-variable time range)
+            if "syear" in var_config:
+                self.syear_input.setText(str(var_config["syear"]))
+            if "eyear" in var_config:
+                self.eyear_input.setText(str(var_config["eyear"]))
 
-    def _populate_sim_variable_settings(self, content: dict, general: dict, openbench_root: str):
+    def _populate_sim_variable_settings(self, content: dict, general: dict):
         """Populate simulation data variable-specific fields."""
         # For sim data: prefix/suffix from general
         if "prefix" in general:
@@ -556,7 +733,7 @@ class DataSourceEditor(QDialog):
 
         # Model namelist
         if "model_namelist" in general and general["model_namelist"]:
-            model_path = to_absolute_path(general["model_namelist"], openbench_root)
+            model_path = self._convert_path(general["model_namelist"])
             self.model_nml.set_path(model_path)
 
     def _on_model_changed(self, path: str, force: bool = False):
@@ -572,16 +749,31 @@ class DataSourceEditor(QDialog):
         import yaml
         import os
 
-        openbench_root = get_openbench_root()
-        full_path = to_absolute_path(path, openbench_root)
+        content = None
 
-        if not os.path.exists(full_path):
-            return
+        if self._is_remote_mode():
+            # Load from remote server
+            try:
+                stdout, stderr, exit_code = self._ssh_manager.execute(
+                    f"cat '{path}'", timeout=30
+                )
+                if exit_code == 0 and stdout.strip():
+                    content = yaml.safe_load(stdout) or {}
+            except Exception:
+                return
+        else:
+            # Load from local file
+            full_path = to_absolute_path(path, get_openbench_root())
+            if not os.path.exists(full_path):
+                return
 
-        try:
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = yaml.safe_load(f) or {}
-        except Exception:
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = yaml.safe_load(f) or {}
+            except Exception:
+                return
+
+        if not content:
             return
 
         # Look up current variable in model definition
@@ -610,9 +802,17 @@ class DataSourceEditor(QDialog):
             )
             return
 
-        # Resolve path
-        openbench_root = get_openbench_root()
-        full_path = to_absolute_path(model_path, openbench_root)
+        if self._is_remote_mode():
+            # Remote mode: editing remote files not supported directly
+            QMessageBox.information(
+                self, "Remote Mode",
+                "Editing remote model definition files is not supported.\n\n"
+                "Please edit the file directly on the remote server."
+            )
+            return
+
+        # Local mode: resolve path and edit
+        full_path = to_absolute_path(model_path, get_openbench_root())
 
         if not os.path.exists(full_path):
             QMessageBox.warning(
@@ -647,14 +847,15 @@ class DataSourceEditor(QDialog):
         For ref data: variable-specific fields (sub_dir, varname, varunit, prefix, suffix)
                      are stored at top level of returned dict
         For sim data: prefix/suffix are stored in general section
+
+        In remote mode, paths are kept as-is (they are already remote paths).
         """
         is_station = self.radio_station.isChecked()
-        openbench_root = get_openbench_root()
 
-        # Convert root_dir to absolute path
+        # Convert root_dir to absolute path (only in local mode)
         root_dir = self.root_dir.path()
         if root_dir:
-            root_dir = to_absolute_path(root_dir, openbench_root)
+            root_dir = self._convert_path(root_dir)
 
         # Build general section
         # Use "dir" for sim data, "root_dir" for ref data
@@ -699,11 +900,11 @@ class DataSourceEditor(QDialog):
         else:
             general["grid_res"] = ""
 
-        # Add fulllist for station data (optional) - convert to absolute
+        # Add fulllist for station data (optional) - convert to absolute (only in local mode)
         if is_station:
             fulllist_path = self.fulllist.path()
             if fulllist_path:
-                general["fulllist"] = to_absolute_path(fulllist_path, openbench_root)
+                general["fulllist"] = self._convert_path(fulllist_path)
 
         data = {"general": general}
 
@@ -719,72 +920,167 @@ class DataSourceEditor(QDialog):
         if self.suffix_input.text():
             data["suffix"] = self.suffix_input.text()
 
-        # Add model definition for sim - convert to absolute
+        # Add model definition for sim - convert to absolute (only in local mode)
         if self.source_type == "sim":
             model_path = self.model_nml.path()
             if model_path:
-                model_path = to_absolute_path(model_path, openbench_root)
+                model_path = self._convert_path(model_path)
             data["general"]["model_namelist"] = model_path
 
         return data
 
     def accept(self):
         """Override accept to validate required fields and paths before closing."""
+        from core.validation import FieldValidator, ValidationManager
+
+        errors = []
+        manager = ValidationManager(self)
+
         # Validate source name (required for new sources)
         if hasattr(self, 'name_input'):
-            source_name = self.name_input.text().strip()
-            if not source_name:
-                QMessageBox.warning(
-                    self, "Validation Error",
-                    "Source name is required."
-                )
-                self.name_input.setFocus()
-                return
+            error = FieldValidator.required(
+                self.name_input.text().strip(),
+                "source_name",
+                "数据源名称不能为空",
+                widget=self.name_input
+            )
+            if error:
+                errors.append(error)
 
         # Validate root_dir (required)
         root_dir = self.root_dir.path()
-        if not root_dir:
-            QMessageBox.warning(
-                self, "Validation Error",
-                "Root directory is required."
+        error = FieldValidator.required(
+            root_dir,
+            "root_dir",
+            "根目录不能为空",
+            widget=self.root_dir
+        )
+        if error:
+            errors.append(error)
+
+        # Validate varname (required)
+        error = FieldValidator.required(
+            self.varname_input.text().strip(),
+            "varname",
+            "变量名不能为空",
+            widget=self.varname_input
+        )
+        if error:
+            errors.append(error)
+
+        # Validate prefix/suffix (at least one required)
+        error = FieldValidator.at_least_one(
+            [self.prefix_input.text().strip(), self.suffix_input.text().strip()],
+            ["prefix", "suffix"],
+            "文件前缀和后缀至少填写一个",
+            widget=self.prefix_input
+        )
+        if error:
+            errors.append(error)
+
+        # Grid type specific validations
+        if self.radio_grid.isChecked():
+            # Grid resolution required
+            grid_res = self.grid_res_input.text().strip()
+            error = FieldValidator.required(
+                grid_res,
+                "grid_res",
+                "Grid 类型数据必须填写网格分辨率",
+                widget=self.grid_res_input
             )
+            if error:
+                errors.append(error)
+
+            # Year range required for grid type
+            syear = self.syear_input.text().strip()
+            eyear = self.eyear_input.text().strip()
+
+            error = FieldValidator.required(
+                syear,
+                "syear",
+                "Grid 类型数据必须填写起始年份",
+                widget=self.syear_input
+            )
+            if error:
+                errors.append(error)
+
+            error = FieldValidator.required(
+                eyear,
+                "eyear",
+                "Grid 类型数据必须填写结束年份",
+                widget=self.eyear_input
+            )
+            if error:
+                errors.append(error)
+
+            # Validate year range if both provided
+            if syear and eyear:
+                try:
+                    syear_int = int(syear)
+                    eyear_int = int(eyear)
+                    error = FieldValidator.min_max(
+                        syear_int,
+                        eyear_int,
+                        "year_range",
+                        "起始年份不能大于结束年份",
+                        widget=self.syear_input
+                    )
+                    if error:
+                        errors.append(error)
+                except ValueError:
+                    pass  # Invalid number format handled elsewhere
+
+        # Show first error if any
+        if errors:
+            manager.show_error_and_focus(errors[0])
             return
 
-        if root_dir:
-            root_dir = to_absolute_path(root_dir, get_openbench_root())
-            is_valid, error = validate_path(root_dir, "directory")
-            if not is_valid:
-                QMessageBox.warning(
-                    self, "Invalid Path",
-                    f"Root directory path is invalid:\n{root_dir}\n\n{error}"
-                )
-                return
-
-        # Validate fulllist if station data
-        if self.radio_station.isChecked():
-            fulllist_path = self.fulllist.path()
-            if fulllist_path:
-                fulllist_path = to_absolute_path(fulllist_path, get_openbench_root())
-                is_valid, error = validate_path(fulllist_path, "file")
+        # Path validation (skip in remote mode)
+        if not self._is_remote_mode():
+            if root_dir:
+                root_dir = to_absolute_path(root_dir, get_openbench_root())
+                is_valid, error_msg = validate_path(root_dir, "directory")
                 if not is_valid:
-                    QMessageBox.warning(
-                        self, "Invalid Path",
-                        f"Station list file path is invalid:\n{fulllist_path}\n\n{error}"
+                    error = ValidationError(
+                        "root_dir",
+                        f"根目录路径不存在: {root_dir}",
+                        "",
+                        self.root_dir
                     )
+                    manager.show_error_and_focus(error)
                     return
 
-        # Validate model_namelist for sim data
-        if self.source_type == "sim":
-            model_path = self.model_nml.path()
-            if model_path:
-                model_path = to_absolute_path(model_path, get_openbench_root())
-                is_valid, error = validate_path(model_path, "file")
-                if not is_valid:
-                    QMessageBox.warning(
-                        self, "Invalid Path",
-                        f"Model definition file path is invalid:\n{model_path}\n\n{error}"
-                    )
-                    return
+            # Validate fulllist if station data
+            if self.radio_station.isChecked():
+                fulllist_path = self.fulllist.path()
+                if fulllist_path:
+                    fulllist_path = to_absolute_path(fulllist_path, get_openbench_root())
+                    is_valid, error_msg = validate_path(fulllist_path, "file")
+                    if not is_valid:
+                        error = ValidationError(
+                            "fulllist",
+                            f"站点列表文件不存在: {fulllist_path}",
+                            "",
+                            self.fulllist
+                        )
+                        manager.show_error_and_focus(error)
+                        return
+
+            # Validate model_namelist for sim data
+            if self.source_type == "sim":
+                model_path = self.model_nml.path()
+                if model_path:
+                    model_path = to_absolute_path(model_path, get_openbench_root())
+                    is_valid, error_msg = validate_path(model_path, "file")
+                    if not is_valid:
+                        error = ValidationError(
+                            "model_nml",
+                            f"模型定义文件不存在: {model_path}",
+                            "",
+                            self.model_nml
+                        )
+                        manager.show_error_and_focus(error)
+                        return
 
         super().accept()
 
