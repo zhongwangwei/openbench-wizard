@@ -215,3 +215,33 @@ class TestFieldValidatorAtLeastOne:
             "文件前缀和后缀至少填写一个"
         )
         assert error is not None
+
+
+class TestFieldValidatorSelectionRequired:
+    """Test FieldValidator.selection_required method."""
+
+    def test_selection_with_items(self):
+        """Test passes when items are selected."""
+        selection = {"item1": True, "item2": False, "item3": True}
+        error = FieldValidator.selection_required(selection, "evaluation", "请至少选择一个评估项目")
+        assert error is None
+
+    def test_selection_all_false(self):
+        """Test fails when no items selected."""
+        selection = {"item1": False, "item2": False}
+        error = FieldValidator.selection_required(selection, "evaluation", "请至少选择一个评估项目")
+        assert error is not None
+        assert "至少选择一个" in error.message
+
+    def test_selection_empty_dict(self):
+        """Test fails for empty dict."""
+        error = FieldValidator.selection_required({}, "evaluation", "请至少选择一个评估项目")
+        assert error is not None
+
+    def test_combined_selection(self):
+        """Test combined selection from multiple dicts."""
+        metrics = {"rmse": False}
+        scores = {"overall": True}
+        combined = {**metrics, **scores}
+        error = FieldValidator.selection_required(combined, "metrics_scores", "请至少选择一个指标或评分项")
+        assert error is None

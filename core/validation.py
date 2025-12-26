@@ -180,3 +180,33 @@ class FieldValidator:
 
         combined_name = "/".join(field_names)
         return ValidationError(combined_name, message, page_id, widget)
+
+    @staticmethod
+    def selection_required(
+        selection: Dict[str, bool],
+        field_name: str,
+        message: str,
+        page_id: str = "",
+        widget: QWidget = None
+    ) -> Optional[ValidationError]:
+        """
+        Validate that at least one item is selected (True).
+
+        Args:
+            selection: Dict mapping item names to selected status
+            field_name: Name of the field
+            message: Error message if validation fails
+            page_id: Page ID for error context
+            widget: Widget to focus on error
+
+        Returns:
+            ValidationError if none selected, None if at least one selected
+        """
+        if not selection:
+            return ValidationError(field_name, message, page_id, widget)
+
+        has_selection = any(v for v in selection.values())
+        if not has_selection:
+            return ValidationError(field_name, message, page_id, widget)
+
+        return None
