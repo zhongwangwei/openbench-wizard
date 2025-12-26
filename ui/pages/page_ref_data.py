@@ -19,7 +19,7 @@ from typing import Dict, Any, List
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
     QListWidget, QListWidgetItem, QLabel, QScrollArea,
-    QWidget, QFrame, QMessageBox
+    QWidget, QFrame, QMessageBox, QDialog
 )
 from PySide6.QtCore import Qt
 
@@ -67,6 +67,15 @@ class PageRefData(BasePage):
         self._source_lists: Dict[str, QListWidget] = {}
         # Structure: _source_configs[var_name][source_name] = {"general": {...}, "var_config": {...}}
         self._source_configs: Dict[str, Dict[str, Any]] = {}
+
+        # Add validate button at bottom
+        validate_layout = QHBoxLayout()
+        validate_layout.addStretch()
+        self.validate_btn = QPushButton("验证数据")
+        self.validate_btn.setToolTip("检查所有数据源的文件、变量名、时间和空间范围")
+        self.validate_btn.clicked.connect(self._validate_data)
+        validate_layout.addWidget(self.validate_btn)
+        self.content_layout.addLayout(validate_layout)
 
     def _rebuild_variable_groups(self):
         """Rebuild variable groups based on selected evaluation items."""
@@ -554,3 +563,48 @@ class PageRefData(BasePage):
                     break
             # Open edit dialog
             self._edit_source(var_name)
+
+    def _validate_data(self):
+        """Validate all configured data sources."""
+        from core.data_validator import DataValidator
+        from ui.widgets.validation_dialog import (
+            ValidationProgressDialog, ValidationResultsDialog
+        )
+
+        # Check if any sources configured
+        if not self._source_configs:
+            QMessageBox.information(
+                self, "无数据", "没有配置任何数据源，请先添加数据源。"
+            )
+            return
+
+        # Get general config
+        general_config = self.controller.config.get("general", {})
+
+        # Check if remote mode
+        is_remote = general_config.get("execution_mode") == "remote"
+        ssh_manager = get_remote_ssh_manager(self.controller) if is_remote else None
+
+        if is_remote and not ssh_manager:
+            QMessageBox.warning(
+                self, "未连接", "远程模式需要先连接到服务器。"
+            )
+            return
+
+        # Create validator
+        validator = DataValidator(is_remote=is_remote, ssh_manager=ssh_manager)
+
+        # Show progress dialog
+        progress_dialog = ValidationProgressDialog(
+            validator,
+            self._source_configs,
+            general_config,
+            parent=self
+        )
+
+        if progress_dialog.exec() == QDialog.Accepted:
+            report = progress_dialog.get_report()
+            if report:
+                # Show results dialog
+                results_dialog = ValidationResultsDialog(report, parent=self)
+                results_dialog.exec()
