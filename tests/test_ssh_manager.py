@@ -67,3 +67,54 @@ class TestSSHManagerConnection:
 
         mock_client.close.assert_called_once()
         assert not manager.is_connected
+
+
+class TestSSHManagerExecution:
+    """Test remote command execution."""
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_execute_command(self, mock_ssh_class):
+        """Test executing a command."""
+        mock_client = MagicMock()
+        mock_ssh_class.return_value = mock_client
+
+        # Mock command execution
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+        mock_stdout.read.return_value = b"hello\n"
+        mock_stderr.read.return_value = b""
+        mock_stdout.channel.recv_exit_status.return_value = 0
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        manager = SSHManager()
+        manager.connect("user@host", password="secret")
+        stdout, stderr, exit_code = manager.execute("echo hello")
+
+        assert stdout == "hello\n"
+        assert stderr == ""
+        assert exit_code == 0
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_execute_stream(self, mock_ssh_class):
+        """Test streaming command output."""
+        mock_client = MagicMock()
+        mock_ssh_class.return_value = mock_client
+
+        # Mock channel for streaming
+        mock_channel = MagicMock()
+        mock_channel.recv_ready.side_effect = [True, True, False]
+        mock_channel.recv.side_effect = [b"line1\n", b"line2\n"]
+        mock_channel.exit_status_ready.side_effect = [False, False, True]
+        mock_channel.recv_exit_status.return_value = 0
+
+        mock_transport = MagicMock()
+        mock_transport.open_session.return_value = mock_channel
+        mock_client.get_transport.return_value = mock_transport
+
+        manager = SSHManager()
+        manager.connect("user@host", password="secret")
+
+        lines = list(manager.execute_stream("echo test"))
+        assert "line1\n" in lines
+        assert "line2\n" in lines

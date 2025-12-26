@@ -149,3 +149,68 @@ class SSHManager:
             return True
         except Exception:
             return False
+
+    def execute(self, command: str, timeout: Optional[int] = None) -> Tuple[str, str, int]:
+        """Execute command on remote server.
+
+        Args:
+            command: Command to execute
+            timeout: Command timeout in seconds
+
+        Returns:
+            Tuple of (stdout, stderr, exit_code)
+
+        Raises:
+            SSHConnectionError: If not connected
+        """
+        if not self.is_connected:
+            raise SSHConnectionError("Not connected to server")
+
+        try:
+            stdin, stdout, stderr = self._client.exec_command(
+                command,
+                timeout=timeout or self._timeout
+            )
+            exit_code = stdout.channel.recv_exit_status()
+            return (
+                stdout.read().decode('utf-8', errors='replace'),
+                stderr.read().decode('utf-8', errors='replace'),
+                exit_code
+            )
+        except SSHException as e:
+            raise SSHConnectionError(f"Command execution failed: {e}")
+
+    def execute_stream(
+        self,
+        command: str,
+        callback: Optional[Callable[[str], None]] = None
+    ) -> Generator[str, None, int]:
+        """Execute command and stream output.
+
+        Args:
+            command: Command to execute
+            callback: Optional callback for each line of output
+
+        Yields:
+            Lines of output
+
+        Returns:
+            Exit code
+        """
+        if not self.is_connected:
+            raise SSHConnectionError("Not connected to server")
+
+        transport = self._client.get_transport()
+        channel = transport.open_session()
+        channel.exec_command(command)
+
+        # Read output in real-time
+        while not channel.exit_status_ready() or channel.recv_ready():
+            if channel.recv_ready():
+                data = channel.recv(4096).decode('utf-8', errors='replace')
+                for line in data.splitlines(keepends=True):
+                    if callback:
+                        callback(line)
+                    yield line
+
+        return channel.recv_exit_status()
