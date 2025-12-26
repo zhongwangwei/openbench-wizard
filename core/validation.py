@@ -9,7 +9,7 @@ Provides real-time validation with blocking error popups and auto-focus.
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QMessageBox
 
 
 @dataclass
@@ -210,3 +210,53 @@ class FieldValidator:
             return ValidationError(field_name, message, page_id, widget)
 
         return None
+
+
+class ValidationManager:
+    """
+    Validation manager that coordinates validation flow.
+
+    Handles showing errors sequentially and focusing on error widgets.
+    """
+
+    def __init__(self, parent_widget: QWidget = None):
+        """
+        Initialize validation manager.
+
+        Args:
+            parent_widget: Parent widget for message boxes
+        """
+        self._parent = parent_widget
+
+    def show_error_and_focus(self, error: ValidationError) -> None:
+        """
+        Show error message and focus on the error widget.
+
+        Args:
+            error: ValidationError to display
+        """
+        QMessageBox.warning(
+            self._parent,
+            "Validation Error",
+            error.message
+        )
+
+        if error.widget is not None:
+            error.widget.setFocus()
+
+    def validate_and_show_errors(self, errors: List[ValidationError]) -> bool:
+        """
+        Process errors one by one, showing each and focusing.
+
+        Args:
+            errors: List of validation errors
+
+        Returns:
+            True if no errors, False if there were errors
+        """
+        if not errors:
+            return True
+
+        # Show first error only (blocking approach)
+        self.show_error_and_focus(errors[0])
+        return False

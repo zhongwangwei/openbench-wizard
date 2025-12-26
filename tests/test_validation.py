@@ -245,3 +245,41 @@ class TestFieldValidatorSelectionRequired:
         combined = {**metrics, **scores}
         error = FieldValidator.selection_required(combined, "metrics_scores", "请至少选择一个指标或评分项")
         assert error is None
+
+
+from unittest.mock import Mock, patch
+from core.validation import ValidationManager
+
+
+class TestValidationManager:
+    """Test ValidationManager class."""
+
+    def test_show_error_and_focus_with_widget(self):
+        """Test showing error and focusing widget."""
+        manager = ValidationManager()
+        mock_widget = Mock()
+        error = ValidationError(
+            field_name="test",
+            message="Test error",
+            page_id="general",
+            widget=mock_widget
+        )
+
+        with patch('core.validation.QMessageBox') as mock_msgbox:
+            manager.show_error_and_focus(error)
+            mock_msgbox.warning.assert_called_once()
+            mock_widget.setFocus.assert_called_once()
+
+    def test_show_error_without_widget(self):
+        """Test showing error without widget (no focus)."""
+        manager = ValidationManager()
+        error = ValidationError(
+            field_name="test",
+            message="Test error",
+            page_id="general",
+            widget=None
+        )
+
+        with patch('core.validation.QMessageBox') as mock_msgbox:
+            manager.show_error_and_focus(error)
+            mock_msgbox.warning.assert_called_once()
