@@ -9,11 +9,13 @@ import sys
 from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QSpinBox, QDoubleSpinBox,
     QComboBox, QCheckBox, QGroupBox, QHBoxLayout,
-    QGridLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
+    QGridLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout,
+    QRadioButton, QButtonGroup
 )
 
 from ui.pages.base_page import BasePage
 from ui.widgets import PathSelector
+from ui.widgets.remote_config import RemoteConfigWidget
 from core.path_utils import to_absolute_path, get_openbench_root
 
 
@@ -197,6 +199,27 @@ class PageGeneral(BasePage):
         runtime_group = QGroupBox("Runtime Environment")
         runtime_layout = QFormLayout(runtime_group)
 
+        # Execution Mode toggle (Local/Remote)
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(15)
+        self.execution_mode_group = QButtonGroup(self)
+        self.radio_local = QRadioButton("Local")
+        self.radio_local.setChecked(True)
+        self.radio_local.setToolTip("Run OpenBench on this machine")
+        self.radio_remote = QRadioButton("Remote")
+        self.radio_remote.setToolTip("Run OpenBench on a remote server via SSH")
+        self.execution_mode_group.addButton(self.radio_local)
+        self.execution_mode_group.addButton(self.radio_remote)
+        self.radio_local.toggled.connect(self._on_execution_mode_changed)
+        mode_layout.addWidget(self.radio_local)
+        mode_layout.addWidget(self.radio_remote)
+        mode_layout.addStretch()
+        runtime_layout.addRow("Execution Mode:", mode_layout)
+
+        # === Local Environment Settings (shown when Local mode selected) ===
+        self.local_env_widget = QGroupBox("Local Environment")
+        local_env_layout = QFormLayout(self.local_env_widget)
+
         # Python path with auto-detect and browse
         python_layout = QHBoxLayout()
         self.python_path_combo = QComboBox()
@@ -216,7 +239,7 @@ class PageGeneral(BasePage):
         self.btn_browse_python.clicked.connect(self._browse_python)
         python_layout.addWidget(self.btn_browse_python)
 
-        runtime_layout.addRow("Python Path:", python_layout)
+        local_env_layout.addRow("Python Path:", python_layout)
 
         # Conda environment selector
         env_layout = QHBoxLayout()
@@ -233,9 +256,17 @@ class PageGeneral(BasePage):
         env_layout.addWidget(self.btn_refresh_envs)
 
         env_layout.addStretch()
-        runtime_layout.addRow("Conda Environment:", env_layout)
+        local_env_layout.addRow("Conda Environment:", env_layout)
 
-        # CPU cores
+        runtime_layout.addRow("", self.local_env_widget)
+
+        # === Remote Environment Settings (shown when Remote mode selected) ===
+        self.remote_config_widget = RemoteConfigWidget()
+        self.remote_config_widget.config_changed.connect(self._on_remote_config_changed)
+        self.remote_config_widget.hide()  # Hidden by default (Local mode)
+        runtime_layout.addRow("", self.remote_config_widget)
+
+        # CPU cores (applies to both modes)
         self.num_cores_spin = QSpinBox()
         self.num_cores_spin.setRange(1, 128)
         self.num_cores_spin.setValue(4)
@@ -468,6 +499,27 @@ class PageGeneral(BasePage):
 
         self._save_to_config_no_sync()
 
+    def _on_execution_mode_changed(self, checked: bool):
+        """Handle execution mode change (Local/Remote).
+
+        Args:
+            checked: Whether Local radio button is checked
+        """
+        if self.radio_local.isChecked():
+            # Local mode: show local env widget, hide remote config
+            self.local_env_widget.show()
+            self.remote_config_widget.hide()
+        else:
+            # Remote mode: hide local env widget, show remote config
+            self.local_env_widget.hide()
+            self.remote_config_widget.show()
+
+        self._save_to_config_no_sync()
+
+    def _on_remote_config_changed(self):
+        """Handle changes in remote configuration widget."""
+        self._save_to_config_no_sync()
+
     def _on_toggle_changed(self, state):
         """Handle feature toggle changes."""
         self.save_to_config()
@@ -683,6 +735,22 @@ class PageGeneral(BasePage):
         if idx >= 0:
             self.weight_combo.setCurrentIndex(idx)
 
+        # Load execution mode (Local/Remote)
+        execution_mode = general.get("execution_mode", "local")
+        if execution_mode == "remote":
+            self.radio_remote.setChecked(True)
+            self.local_env_widget.hide()
+            self.remote_config_widget.show()
+        else:
+            self.radio_local.setChecked(True)
+            self.local_env_widget.show()
+            self.remote_config_widget.hide()
+
+        # Load remote configuration if available
+        remote_config = general.get("remote", {})
+        if remote_config:
+            self.remote_config_widget.set_config(remote_config)
+
         # Update Year Range state based on per_var_time_range settings
         self.update_year_range_state()
 
@@ -728,9 +796,16 @@ class PageGeneral(BasePage):
             "unified_mask": self.cb_unified_mask.isChecked(),
             "num_cores": self.num_cores_spin.value(),
             "weight": self.weight_combo.currentText().lower(),
+            "execution_mode": "local" if self.radio_local.isChecked() else "remote",
             "python_path": self.python_path_combo.currentText().split(' ')[0],  # Extract path only
             "conda_env": self.conda_env_combo.currentText() if self.conda_env_combo.currentIndex() > 0 else "",
         }
+
+        # Add remote settings if in remote mode
+        if self.radio_remote.isChecked():
+            remote_config = self.remote_config_widget.get_config()
+            general["remote"] = remote_config
+
         self.controller.update_section("general", general)
 
     def save_to_config(self):
