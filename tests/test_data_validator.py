@@ -61,3 +61,73 @@ class TestValidationDataClasses:
         assert report.total_count == 2
         assert report.passed_count == 1
         assert report.failed_count == 1
+
+
+from core.data_validator import FilePathGenerator
+
+
+class TestFilePathGenerator:
+    """Test file path generation based on data_groupby."""
+
+    def test_single_groupby(self):
+        """Test Single groupby - one file."""
+        gen = FilePathGenerator(
+            root_dir="/data",
+            sub_dir="ET",
+            prefix="gleam_",
+            suffix="_v4",
+            data_groupby="Single",
+            syear=2000,
+            eyear=2020
+        )
+        paths = gen.get_sample_paths()
+        assert len(paths) == 1
+        assert paths[0] == "/data/ET/gleam__v4.nc"
+
+    def test_year_groupby(self):
+        """Test Year groupby - sample years."""
+        gen = FilePathGenerator(
+            root_dir="/data",
+            sub_dir="ET",
+            prefix="gleam_",
+            suffix="",
+            data_groupby="Year",
+            syear=2000,
+            eyear=2020
+        )
+        paths = gen.get_sample_paths()
+        # Should return first, middle, last year
+        assert len(paths) == 3
+        assert "/data/ET/gleam_2000.nc" in paths
+        assert "/data/ET/gleam_2010.nc" in paths
+        assert "/data/ET/gleam_2020.nc" in paths
+
+    def test_month_groupby(self):
+        """Test Month groupby - sample months."""
+        gen = FilePathGenerator(
+            root_dir="/data",
+            sub_dir="",
+            prefix="data_",
+            suffix="",
+            data_groupby="Month",
+            syear=2000,
+            eyear=2001
+        )
+        paths = gen.get_sample_paths()
+        # Should sample a few months
+        assert len(paths) >= 2
+        assert any("200001" in p for p in paths)
+
+    def test_no_sub_dir(self):
+        """Test path generation without sub_dir."""
+        gen = FilePathGenerator(
+            root_dir="/data",
+            sub_dir="",
+            prefix="file_",
+            suffix="",
+            data_groupby="Single",
+            syear=2000,
+            eyear=2020
+        )
+        paths = gen.get_sample_paths()
+        assert paths[0] == "/data/file_.nc"
