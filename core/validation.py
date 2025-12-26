@@ -60,3 +60,36 @@ class FieldValidator:
             return ValidationError(field_name, message, page_id, widget)
 
         return None
+
+    @staticmethod
+    def path_exists(
+        path: str,
+        field_name: str,
+        message: str,
+        page_id: str = "",
+        widget: QWidget = None
+    ) -> Optional[ValidationError]:
+        """
+        Validate that a path exists.
+
+        Args:
+            path: Path to validate
+            field_name: Name of the field for error reporting
+            message: Error message if validation fails
+            page_id: Page ID for error context
+            widget: Widget to focus on error
+
+        Returns:
+            ValidationError if invalid, None if valid
+        """
+        import os
+
+        # Empty path is OK (optional field)
+        if not path or not path.strip():
+            return None
+
+        if not os.path.exists(path):
+            full_message = f"{message}: {path}"
+            return ValidationError(field_name, full_message, page_id, widget)
+
+        return None

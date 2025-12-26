@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 """Tests for validation module."""
 
+import tempfile
+import os
+
 import pytest
 from core.validation import ValidationError, ValidationResult, FieldValidator
 
@@ -79,3 +82,37 @@ class TestFieldValidator:
         """Test required validation fails for None."""
         error = FieldValidator.required(None, "project_name", "项目名称不能为空")
         assert error is not None
+
+
+class TestFieldValidatorPathExists:
+    """Test FieldValidator.path_exists method."""
+
+    def test_path_exists_with_valid_directory(self):
+        """Test path exists passes for valid directory."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            error = FieldValidator.path_exists(tmpdir, "root_dir", "目录不存在")
+            assert error is None
+
+    def test_path_exists_with_invalid_path(self):
+        """Test path exists fails for non-existent path."""
+        error = FieldValidator.path_exists(
+            "/non/existent/path/12345",
+            "root_dir",
+            "目录不存在"
+        )
+        assert error is not None
+        assert "目录不存在" in error.message
+
+    def test_path_exists_with_empty_path(self):
+        """Test path exists passes for empty path (optional field)."""
+        error = FieldValidator.path_exists("", "root_dir", "目录不存在")
+        assert error is None
+
+    def test_path_exists_with_file(self):
+        """Test path exists passes for valid file."""
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            try:
+                error = FieldValidator.path_exists(f.name, "file_path", "文件不存在")
+                assert error is None
+            finally:
+                os.unlink(f.name)
