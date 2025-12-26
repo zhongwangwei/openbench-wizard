@@ -299,3 +299,103 @@ class SSHManager:
                 sftp.stat(path)
             except FileNotFoundError:
                 sftp.mkdir(path)
+
+    def _get_home_dir(self) -> str:
+        """Get remote home directory.
+
+        Returns:
+            Home directory path
+        """
+        stdout, _, _ = self.execute("echo $HOME", timeout=5)
+        return stdout.strip() or f"/home/{self._user}"
+
+    def detect_python_interpreters(self) -> List[str]:
+        """Detect available Python interpreters on remote server.
+
+        Returns:
+            List of Python interpreter paths
+        """
+        pythons = []
+        home = self._get_home_dir()
+
+        # Check common locations
+        paths_to_check = [
+            "which python3",
+            "which python",
+            f"ls {home}/miniforge3/bin/python 2>/dev/null",
+            f"ls {home}/miniconda3/bin/python 2>/dev/null",
+            f"ls {home}/anaconda3/bin/python 2>/dev/null",
+            "ls /opt/homebrew/bin/python3 2>/dev/null",
+            "ls /usr/local/bin/python3 2>/dev/null",
+        ]
+
+        for cmd in paths_to_check:
+            try:
+                stdout, _, exit_code = self.execute(cmd, timeout=5)
+                if exit_code == 0 and stdout.strip():
+                    path = stdout.strip().split('\n')[0]
+                    if path and path not in pythons:
+                        pythons.append(path)
+            except Exception:
+                continue
+
+        return pythons
+
+    def detect_conda_envs(self) -> List[Tuple[str, str]]:
+        """Detect conda environments on remote server.
+
+        Returns:
+            List of (env_name, env_path) tuples
+        """
+        envs = []
+        home = self._get_home_dir()
+
+        # Find conda executable
+        conda_paths = [
+            f"{home}/miniforge3/bin/conda",
+            f"{home}/miniconda3/bin/conda",
+            f"{home}/anaconda3/bin/conda",
+        ]
+
+        conda_exe = None
+        for path in conda_paths:
+            stdout, _, exit_code = self.execute(f"test -f {path} && echo exists", timeout=5)
+            if exit_code == 0 and "exists" in stdout:
+                conda_exe = path
+                break
+
+        if not conda_exe:
+            return envs
+
+        # Get environment list
+        try:
+            stdout, _, exit_code = self.execute(f"{conda_exe} env list", timeout=10)
+            if exit_code == 0:
+                for line in stdout.strip().split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        parts = line.split()
+                        if len(parts) >= 1:
+                            name = parts[0].replace('*', '').strip()
+                            path = parts[-1] if len(parts) > 1 else ""
+                            if name and name != "base":
+                                envs.append((name, path))
+                            elif name == "base":
+                                envs.insert(0, (name, path))
+        except Exception:
+            pass
+
+        return envs
+
+    def check_openbench_installed(self, path: str) -> bool:
+        """Check if OpenBench is installed at given path.
+
+        Args:
+            path: Path to check
+
+        Returns:
+            True if OpenBench is installed
+        """
+        check_file = f"{path}/openbench/openbench.py"
+        stdout, _, exit_code = self.execute(f"test -f {check_file} && echo exists", timeout=5)
+        return exit_code == 0 and "exists" in stdout
