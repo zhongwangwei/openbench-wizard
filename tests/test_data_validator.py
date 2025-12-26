@@ -118,6 +118,22 @@ class TestFilePathGenerator:
         assert len(paths) >= 2
         assert any("200001" in p for p in paths)
 
+    def test_day_groupby(self):
+        """Test Day groupby - sample days."""
+        gen = FilePathGenerator(
+            root_dir="/data",
+            sub_dir="daily",
+            prefix="obs_",
+            suffix="",
+            data_groupby="Day",
+            syear=2000,
+            eyear=2001
+        )
+        paths = gen.get_sample_paths()
+        assert len(paths) == 2
+        assert "/data/daily/obs_20000101.nc" in paths
+        assert "/data/daily/obs_20010101.nc" in paths
+
     def test_no_sub_dir(self):
         """Test path generation without sub_dir."""
         gen = FilePathGenerator(
