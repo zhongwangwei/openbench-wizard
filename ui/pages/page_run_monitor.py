@@ -109,8 +109,11 @@ class PageRunMonitor(BasePage):
         comparisons = config.get("comparisons", {})
         num_comparisons = len([k for k, v in comparisons.items() if v])
 
+        # Get Python path from config
+        python_path = general.get("python_path", "")
+
         # Create and start runner
-        self._runner = EvaluationRunner(config_path, self)
+        self._runner = EvaluationRunner(config_path, python_path, self)
         self._runner.set_task_counts(
             num_variables=num_variables,
             num_ref_sources=num_ref_sources,

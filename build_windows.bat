@@ -6,7 +6,7 @@ REM Install dependencies
 pip install pyinstaller pyside6 pyyaml psutil
 
 REM Build executable
-pyinstaller --clean build_windows.spec
+pyinstaller --clean openbench_wizard.spec
 
 echo.
 echo Build complete! Executable is in: dist\OpenBench_Wizard.exe

@@ -327,13 +327,16 @@ class MainWindow(QMainWindow):
             return
 
         if not self.controller.go_next():
-            # At the end - show completion message and close app
-            QMessageBox.information(
+            # At the end - ask for confirmation before closing
+            reply = QMessageBox.question(
                 self,
-                "Complete",
-                "Configuration wizard completed!"
+                "Exit",
+                "Are you sure you want to exit the wizard?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
             )
-            self.close()
+            if reply == QMessageBox.Yes:
+                self.close()
 
     def _on_rerun_clicked(self):
         """Handle Rerun button click - re-export and run."""
