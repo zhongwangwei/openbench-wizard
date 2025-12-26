@@ -214,3 +214,88 @@ class SSHManager:
                     yield line
 
         return channel.recv_exit_status()
+
+    def _get_sftp(self) -> paramiko.SFTPClient:
+        """Get or create SFTP client.
+
+        Returns:
+            SFTP client
+
+        Raises:
+            SSHConnectionError: If not connected
+        """
+        if not self.is_connected:
+            raise SSHConnectionError("Not connected to server")
+
+        if self._sftp is None:
+            self._sftp = self._client.open_sftp()
+        return self._sftp
+
+    def upload_file(self, local_path: str, remote_path: str) -> None:
+        """Upload a file to remote server.
+
+        Args:
+            local_path: Local file path
+            remote_path: Remote destination path
+        """
+        sftp = self._get_sftp()
+        # Ensure remote directory exists
+        remote_dir = os.path.dirname(remote_path)
+        if remote_dir:
+            self._ensure_remote_dir(remote_dir)
+        sftp.put(local_path, remote_path)
+
+    def download_file(self, remote_path: str, local_path: str) -> None:
+        """Download a file from remote server.
+
+        Args:
+            remote_path: Remote file path
+            local_path: Local destination path
+        """
+        sftp = self._get_sftp()
+        # Ensure local directory exists
+        local_dir = os.path.dirname(local_path)
+        if local_dir:
+            os.makedirs(local_dir, exist_ok=True)
+        sftp.get(remote_path, local_path)
+
+    def upload_directory(self, local_dir: str, remote_dir: str) -> None:
+        """Upload a directory recursively.
+
+        Args:
+            local_dir: Local directory path
+            remote_dir: Remote destination path
+        """
+        sftp = self._get_sftp()
+        self._ensure_remote_dir(remote_dir)
+
+        for root, dirs, files in os.walk(local_dir):
+            rel_path = os.path.relpath(root, local_dir)
+            if rel_path == ".":
+                remote_root = remote_dir
+            else:
+                remote_root = os.path.join(remote_dir, rel_path).replace("\\", "/")
+                self._ensure_remote_dir(remote_root)
+
+            for file in files:
+                local_file = os.path.join(root, file)
+                remote_file = os.path.join(remote_root, file).replace("\\", "/")
+                sftp.put(local_file, remote_file)
+
+    def _ensure_remote_dir(self, remote_dir: str) -> None:
+        """Ensure remote directory exists.
+
+        Args:
+            remote_dir: Remote directory path
+        """
+        sftp = self._get_sftp()
+        dirs = remote_dir.replace("\\", "/").split("/")
+        path = ""
+        for d in dirs:
+            if not d:
+                continue
+            path = f"{path}/{d}"
+            try:
+                sftp.stat(path)
+            except FileNotFoundError:
+                sftp.mkdir(path)

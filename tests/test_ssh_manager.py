@@ -118,3 +118,37 @@ class TestSSHManagerExecution:
         lines = list(manager.execute_stream("echo test"))
         assert "line1\n" in lines
         assert "line2\n" in lines
+
+
+class TestSSHManagerFileTransfer:
+    """Test file transfer functionality."""
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_upload_file(self, mock_ssh_class):
+        """Test uploading a file."""
+        mock_client = MagicMock()
+        mock_sftp = MagicMock()
+        mock_client.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_client
+
+        manager = SSHManager()
+        manager.connect("user@host", password="secret")
+        manager.upload_file("/local/file.txt", "/remote/file.txt")
+
+        mock_sftp.put.assert_called_once_with("/local/file.txt", "/remote/file.txt")
+
+    @patch('core.ssh_manager.os.makedirs')
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_download_file(self, mock_ssh_class, mock_makedirs):
+        """Test downloading a file."""
+        mock_client = MagicMock()
+        mock_sftp = MagicMock()
+        mock_client.open_sftp.return_value = mock_sftp
+        mock_ssh_class.return_value = mock_client
+
+        manager = SSHManager()
+        manager.connect("user@host", password="secret")
+        manager.download_file("/remote/file.txt", "/local/file.txt")
+
+        mock_sftp.get.assert_called_once_with("/remote/file.txt", "/local/file.txt")
+        mock_makedirs.assert_called_once_with("/local", exist_ok=True)
