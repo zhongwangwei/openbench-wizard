@@ -7,6 +7,7 @@ from ui.widgets.yaml_preview import YamlPreview
 from ui.widgets.progress_dashboard import ProgressDashboard, TaskStatus, TaskInfo
 from ui.widgets.data_source_editor import DataSourceEditor
 from ui.widgets.model_definition_editor import ModelDefinitionEditor
+from ui.widgets.remote_config import RemoteConfigWidget
 
 __all__ = [
     "PathSelector",
@@ -17,4 +18,5 @@ __all__ = [
     "TaskInfo",
     "DataSourceEditor",
     "ModelDefinitionEditor",
+    "RemoteConfigWidget",
 ]
