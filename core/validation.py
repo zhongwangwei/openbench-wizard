@@ -149,3 +149,34 @@ class FieldValidator:
         if min_value > max_value:
             return ValidationError(field_name, message, page_id, widget)
         return None
+
+    @staticmethod
+    def at_least_one(
+        values: List[Any],
+        field_names: List[str],
+        message: str,
+        page_id: str = "",
+        widget: QWidget = None
+    ) -> Optional[ValidationError]:
+        """
+        Validate that at least one of the values is non-empty.
+
+        Args:
+            values: List of values to check
+            field_names: Names of the fields
+            message: Error message if validation fails
+            page_id: Page ID for error context
+            widget: Widget to focus on error
+
+        Returns:
+            ValidationError if all empty, None if at least one is valid
+        """
+        for value in values:
+            if value is not None:
+                if isinstance(value, str) and value.strip():
+                    return None
+                elif not isinstance(value, str) and value:
+                    return None
+
+        combined_name = "/".join(field_names)
+        return ValidationError(combined_name, message, page_id, widget)

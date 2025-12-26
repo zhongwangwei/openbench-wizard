@@ -174,3 +174,44 @@ class TestFieldValidatorComparison:
 
         error = FieldValidator.min_max(90.0, -90.0, "latitude", "最小值不能大于最大值")
         assert error is not None
+
+
+class TestFieldValidatorAtLeastOne:
+    """Test FieldValidator.at_least_one method."""
+
+    def test_at_least_one_with_values(self):
+        """Test passes when at least one value is provided."""
+        error = FieldValidator.at_least_one(
+            ["prefix_value", ""],
+            ["prefix", "suffix"],
+            "文件前缀和后缀至少填写一个"
+        )
+        assert error is None
+
+    def test_at_least_one_both_filled(self):
+        """Test passes when both values provided."""
+        error = FieldValidator.at_least_one(
+            ["prefix_value", "suffix_value"],
+            ["prefix", "suffix"],
+            "文件前缀和后缀至少填写一个"
+        )
+        assert error is None
+
+    def test_at_least_one_all_empty(self):
+        """Test fails when all values are empty."""
+        error = FieldValidator.at_least_one(
+            ["", ""],
+            ["prefix", "suffix"],
+            "文件前缀和后缀至少填写一个"
+        )
+        assert error is not None
+        assert "至少填写一个" in error.message
+
+    def test_at_least_one_all_whitespace(self):
+        """Test fails when all values are whitespace."""
+        error = FieldValidator.at_least_one(
+            ["  ", "   "],
+            ["prefix", "suffix"],
+            "文件前缀和后缀至少填写一个"
+        )
+        assert error is not None
