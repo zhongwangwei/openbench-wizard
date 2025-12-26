@@ -3,10 +3,13 @@
 General settings page.
 """
 
+import os
+import sys
+
 from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QSpinBox, QDoubleSpinBox,
     QComboBox, QCheckBox, QGroupBox, QHBoxLayout,
-    QGridLayout, QLabel, QMessageBox, QPushButton
+    QGridLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout
 )
 
 from ui.pages.base_page import BasePage
@@ -190,16 +193,280 @@ class PageGeneral(BasePage):
 
         self.content_layout.addWidget(groupby_group)
 
-        # === Performance ===
-        perf_group = QGroupBox("Performance")
-        perf_layout = QFormLayout(perf_group)
+        # === Runtime Environment ===
+        runtime_group = QGroupBox("Runtime Environment")
+        runtime_layout = QFormLayout(runtime_group)
 
+        # Python path with auto-detect and browse
+        python_layout = QHBoxLayout()
+        self.python_path_combo = QComboBox()
+        self.python_path_combo.setEditable(True)
+        self.python_path_combo.setMinimumWidth(300)
+        self.python_path_combo.currentTextChanged.connect(self._on_python_path_changed)
+        python_layout.addWidget(self.python_path_combo)
+
+        self.btn_detect_python = QPushButton("Detect")
+        self.btn_detect_python.setFixedWidth(60)
+        self.btn_detect_python.clicked.connect(self._detect_python_interpreters)
+        self.btn_detect_python.setToolTip("Auto-detect available Python interpreters")
+        python_layout.addWidget(self.btn_detect_python)
+
+        self.btn_browse_python = QPushButton("Browse")
+        self.btn_browse_python.setFixedWidth(60)
+        self.btn_browse_python.clicked.connect(self._browse_python)
+        python_layout.addWidget(self.btn_browse_python)
+
+        runtime_layout.addRow("Python Path:", python_layout)
+
+        # Conda environment selector
+        env_layout = QHBoxLayout()
+        self.conda_env_combo = QComboBox()
+        self.conda_env_combo.setMinimumWidth(200)
+        self.conda_env_combo.addItem("(Not using conda environment)")
+        self.conda_env_combo.currentTextChanged.connect(self._on_conda_env_changed)
+        env_layout.addWidget(self.conda_env_combo)
+
+        self.btn_refresh_envs = QPushButton("Refresh")
+        self.btn_refresh_envs.setFixedWidth(60)
+        self.btn_refresh_envs.clicked.connect(self._refresh_conda_envs)
+        self.btn_refresh_envs.setToolTip("Refresh available conda environments")
+        env_layout.addWidget(self.btn_refresh_envs)
+
+        env_layout.addStretch()
+        runtime_layout.addRow("Conda Environment:", env_layout)
+
+        # CPU cores
         self.num_cores_spin = QSpinBox()
         self.num_cores_spin.setRange(1, 128)
         self.num_cores_spin.setValue(4)
-        perf_layout.addRow("CPU Cores:", self.num_cores_spin)
+        runtime_layout.addRow("CPU Cores:", self.num_cores_spin)
 
-        self.content_layout.addWidget(perf_group)
+        self.content_layout.addWidget(runtime_group)
+
+        # Initial detection of Python interpreters
+        self._detect_python_interpreters()
+
+    def _detect_python_interpreters(self):
+        """Auto-detect available Python interpreters."""
+        import shutil
+        import subprocess
+
+        detected = []
+        is_windows = sys.platform == 'win32'
+        user_home = os.path.expanduser('~')
+
+        # PRIORITY 1: Check active conda environment (CONDA_PREFIX)
+        conda_prefix = os.environ.get('CONDA_PREFIX')
+        if conda_prefix:
+            if is_windows:
+                conda_python = os.path.join(conda_prefix, 'python.exe')
+            else:
+                conda_python = os.path.join(conda_prefix, 'bin', 'python')
+            if os.path.exists(conda_python):
+                detected.append(f"{conda_python} (active conda)")
+
+        # PRIORITY 2: Check common conda/miniforge locations
+        if is_windows:
+            conda_paths = [
+                (os.path.join(user_home, 'anaconda3', 'python.exe'), 'anaconda3'),
+                (os.path.join(user_home, 'miniconda3', 'python.exe'), 'miniconda3'),
+                (os.path.join(user_home, 'miniforge3', 'python.exe'), 'miniforge3'),
+                (os.path.join(user_home, 'Anaconda3', 'python.exe'), 'Anaconda3'),
+                (os.path.join(user_home, 'Miniconda3', 'python.exe'), 'Miniconda3'),
+            ]
+        else:
+            conda_paths = [
+                (os.path.join(user_home, 'miniforge3', 'bin', 'python'), 'miniforge3'),
+                (os.path.join(user_home, 'miniconda3', 'bin', 'python'), 'miniconda3'),
+                (os.path.join(user_home, 'anaconda3', 'bin', 'python'), 'anaconda3'),
+                ('/opt/homebrew/bin/python3', 'homebrew'),
+                ('/usr/local/bin/python3', 'local'),
+            ]
+
+        for path, label in conda_paths:
+            if os.path.exists(path) and path not in [d.split(' ')[0] for d in detected]:
+                detected.append(f"{path} ({label})")
+
+        # PRIORITY 3: Check PATH
+        if is_windows:
+            python_names = ['python', 'python3']
+        else:
+            python_names = ['python3', 'python']
+
+        for name in python_names:
+            path = shutil.which(name)
+            if path and path not in [d.split(' ')[0] for d in detected]:
+                # Skip system Python on macOS/Linux
+                if path == '/usr/bin/python3':
+                    detected.append(f"{path} (system - may lack packages)")
+                else:
+                    detected.append(f"{path} (PATH)")
+
+        # Update combo box
+        current_text = self.python_path_combo.currentText()
+        self.python_path_combo.blockSignals(True)
+        self.python_path_combo.clear()
+
+        for item in detected:
+            self.python_path_combo.addItem(item)
+
+        # Restore previous selection if valid
+        if current_text:
+            idx = self.python_path_combo.findText(current_text)
+            if idx >= 0:
+                self.python_path_combo.setCurrentIndex(idx)
+            else:
+                # Try to find by path only
+                current_path = current_text.split(' ')[0]
+                for i in range(self.python_path_combo.count()):
+                    if self.python_path_combo.itemText(i).startswith(current_path):
+                        self.python_path_combo.setCurrentIndex(i)
+                        break
+
+        self.python_path_combo.blockSignals(False)
+
+        # Also refresh conda environments
+        self._refresh_conda_envs()
+
+    def _browse_python(self):
+        """Open file dialog to select Python interpreter."""
+        from PySide6.QtWidgets import QFileDialog
+
+        if sys.platform == 'win32':
+            filter_str = "Python (python.exe);;All Files (*)"
+        else:
+            filter_str = "All Files (*)"
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Python Interpreter",
+            os.path.expanduser("~"),
+            filter_str
+        )
+
+        if path:
+            self.python_path_combo.setCurrentText(path)
+
+    def _on_python_path_changed(self, text):
+        """Handle Python path change."""
+        self._save_to_config_no_sync()
+        # Refresh conda environments based on the selected Python
+        self._refresh_conda_envs()
+
+    def _refresh_conda_envs(self):
+        """Refresh the list of available conda environments."""
+        import subprocess
+
+        current_python = self.python_path_combo.currentText().split(' ')[0]
+        envs = self._get_conda_envs(current_python)
+
+        current_env = self.conda_env_combo.currentText()
+        self.conda_env_combo.blockSignals(True)
+        self.conda_env_combo.clear()
+        self.conda_env_combo.addItem("(Not using conda environment)")
+
+        for env_name, env_path in envs:
+            self.conda_env_combo.addItem(f"{env_name}", env_path)
+
+        # Restore previous selection
+        if current_env:
+            idx = self.conda_env_combo.findText(current_env)
+            if idx >= 0:
+                self.conda_env_combo.setCurrentIndex(idx)
+
+        self.conda_env_combo.blockSignals(False)
+
+    def _get_conda_envs(self, python_path: str) -> list:
+        """Get list of conda environments.
+
+        Returns list of (env_name, env_path) tuples.
+        """
+        import subprocess
+        import json
+
+        envs = []
+
+        # Try to find conda executable based on the Python path
+        if not python_path:
+            return envs
+
+        # Determine conda base path from Python path
+        python_dir = os.path.dirname(python_path)
+        if sys.platform == 'win32':
+            # Windows: python is in base/python.exe or base/envs/name/python.exe
+            if 'envs' in python_dir:
+                conda_base = python_dir.split('envs')[0].rstrip(os.sep)
+            else:
+                conda_base = python_dir
+            conda_exe = os.path.join(conda_base, 'Scripts', 'conda.exe')
+            if not os.path.exists(conda_exe):
+                conda_exe = os.path.join(conda_base, 'condabin', 'conda.bat')
+        else:
+            # Unix: python is in base/bin/python or base/envs/name/bin/python
+            if 'envs' in python_dir:
+                conda_base = python_dir.split('envs')[0].rstrip(os.sep)
+            else:
+                conda_base = os.path.dirname(python_dir)  # go up from bin/
+            conda_exe = os.path.join(conda_base, 'bin', 'conda')
+
+        if not os.path.exists(conda_exe):
+            # Try common locations
+            user_home = os.path.expanduser('~')
+            for base in ['miniforge3', 'miniconda3', 'anaconda3']:
+                if sys.platform == 'win32':
+                    test_exe = os.path.join(user_home, base, 'Scripts', 'conda.exe')
+                else:
+                    test_exe = os.path.join(user_home, base, 'bin', 'conda')
+                if os.path.exists(test_exe):
+                    conda_exe = test_exe
+                    conda_base = os.path.join(user_home, base)
+                    break
+
+        if not os.path.exists(conda_exe):
+            return envs
+
+        try:
+            result = subprocess.run(
+                [conda_exe, 'env', 'list', '--json'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                for env_path in data.get('envs', []):
+                    env_name = os.path.basename(env_path)
+                    if env_name == conda_base.split(os.sep)[-1]:
+                        env_name = 'base'
+                    envs.append((env_name, env_path))
+        except Exception:
+            pass
+
+        return envs
+
+    def _on_conda_env_changed(self, text):
+        """Handle conda environment selection change."""
+        if text == "(Not using conda environment)":
+            self._save_to_config_no_sync()
+            return
+
+        # Get the environment path from combo box data
+        idx = self.conda_env_combo.currentIndex()
+        if idx > 0:
+            env_path = self.conda_env_combo.itemData(idx)
+            if env_path:
+                # Update Python path to use the environment's Python
+                if sys.platform == 'win32':
+                    env_python = os.path.join(env_path, 'python.exe')
+                else:
+                    env_python = os.path.join(env_path, 'bin', 'python')
+
+                if os.path.exists(env_python):
+                    self.python_path_combo.blockSignals(True)
+                    self.python_path_combo.setCurrentText(f"{env_python} ({text})")
+                    self.python_path_combo.blockSignals(False)
+
+        self._save_to_config_no_sync()
 
     def _on_toggle_changed(self, state):
         """Handle feature toggle changes."""
@@ -382,6 +649,30 @@ class PageGeneral(BasePage):
 
         self.num_cores_spin.setValue(general.get("num_cores", 4))
 
+        # Load Python path (after detection has run)
+        python_path = general.get("python_path", "")
+        if python_path:
+            self.python_path_combo.blockSignals(True)
+            # Check if it's already in the list
+            found = False
+            for i in range(self.python_path_combo.count()):
+                if self.python_path_combo.itemText(i).startswith(python_path):
+                    self.python_path_combo.setCurrentIndex(i)
+                    found = True
+                    break
+            if not found:
+                self.python_path_combo.setCurrentText(python_path)
+            self.python_path_combo.blockSignals(False)
+
+        # Load conda environment
+        conda_env = general.get("conda_env", "")
+        if conda_env:
+            self.conda_env_combo.blockSignals(True)
+            idx = self.conda_env_combo.findText(conda_env)
+            if idx >= 0:
+                self.conda_env_combo.setCurrentIndex(idx)
+            self.conda_env_combo.blockSignals(False)
+
         weight = general.get("weight", "none")
         if weight is None:
             weight = "none"
@@ -437,6 +728,8 @@ class PageGeneral(BasePage):
             "unified_mask": self.cb_unified_mask.isChecked(),
             "num_cores": self.num_cores_spin.value(),
             "weight": self.weight_combo.currentText().lower(),
+            "python_path": self.python_path_combo.currentText().split(' ')[0],  # Extract path only
+            "conda_env": self.conda_env_combo.currentText() if self.conda_env_combo.currentIndex() > 0 else "",
         }
         self.controller.update_section("general", general)
 

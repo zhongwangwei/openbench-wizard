@@ -48,9 +48,10 @@ class EvaluationRunner(QThread):
     log_message = Signal(str)
     finished_signal = Signal(bool, str)  # success, message
 
-    def __init__(self, config_path: str, parent=None):
+    def __init__(self, config_path: str, python_path: str = "", parent=None):
         super().__init__(parent)
         self.config_path = config_path
+        self.python_path = python_path  # User-configured Python path
         self._stop_requested = False
         self._stop_lock = threading.Lock()  # Lock for thread-safe stop flag access
         self._process: Optional[subprocess.Popen] = None
@@ -123,6 +124,18 @@ class EvaluationRunner(QThread):
 
             # Find Python interpreter (not the bundled executable)
             python_exe = self._find_python_interpreter()
+
+            if not python_exe:
+                error_msg = (
+                    "Could not find a suitable Python interpreter.\n\n"
+                    "Please configure the Python path in General Settings:\n"
+                    "1. Go to 'General Settings' page\n"
+                    "2. In 'Runtime Environment' section, select or browse for Python\n"
+                    "3. Choose a Python with numpy, scipy, and other required packages\n\n"
+                    "Note: System Python (/usr/bin/python3) is not used as it typically lacks required packages."
+                )
+                self.finished_signal.emit(False, error_msg)
+                return
 
             cmd = [
                 python_exe,
@@ -241,71 +254,96 @@ class EvaluationRunner(QThread):
             )
             self.finished_signal.emit(False, str(e))
 
-    def _find_python_interpreter(self) -> str:
-        """Find a Python interpreter to run OpenBench."""
+    def _find_python_interpreter(self) -> Optional[str]:
+        """Find a Python interpreter to run OpenBench.
+
+        Returns the Python path or None if no suitable interpreter found.
+        User should configure Python path in General settings if auto-detection fails.
+        """
         import shutil
 
         is_windows = sys.platform == 'win32'
+
+        # PRIORITY 0: Use user-configured Python path (from General settings)
+        if self.python_path and os.path.exists(self.python_path):
+            self.log_message.emit(f"Using Python (configured): {self.python_path}")
+            return self.python_path
 
         # Check if sys.executable is a real Python interpreter (not bundled app)
         if sys.executable and 'python' in sys.executable.lower():
             # Verify it's not the bundled executable
             if os.path.basename(sys.executable).lower() not in ('openbench_wizard.exe', 'openbench_wizard'):
+                self.log_message.emit(f"Using Python: {sys.executable}")
                 return sys.executable
 
-        # Common Python executable names - order matters!
-        # On Windows, 'python' is the standard command; 'python3' often doesn't exist
+        # PRIORITY 1: Check active conda environment (CONDA_PREFIX)
+        conda_prefix = os.environ.get('CONDA_PREFIX')
+        if conda_prefix:
+            if is_windows:
+                conda_python = os.path.join(conda_prefix, 'python.exe')
+            else:
+                conda_python = os.path.join(conda_prefix, 'bin', 'python')
+            if os.path.exists(conda_python):
+                self.log_message.emit(f"Using Python (conda): {conda_python}")
+                return conda_python
+
+        # PRIORITY 2: Check common conda/miniforge locations BEFORE system Python
+        user_home = os.path.expanduser('~')
+        if is_windows:
+            conda_paths = [
+                os.path.join(user_home, 'anaconda3', 'python.exe'),
+                os.path.join(user_home, 'miniconda3', 'python.exe'),
+                os.path.join(user_home, 'miniforge3', 'python.exe'),
+                os.path.join(user_home, 'Anaconda3', 'python.exe'),
+                os.path.join(user_home, 'Miniconda3', 'python.exe'),
+            ]
+        else:
+            conda_paths = [
+                os.path.join(user_home, 'miniforge3', 'bin', 'python'),
+                os.path.join(user_home, 'miniconda3', 'bin', 'python'),
+                os.path.join(user_home, 'anaconda3', 'bin', 'python'),
+                '/opt/homebrew/bin/python3',
+                '/usr/local/bin/python3',
+            ]
+
+        for path in conda_paths:
+            if os.path.exists(path):
+                self.log_message.emit(f"Using Python: {path}")
+                return path
+
+        # PRIORITY 3: Check PATH (skip system Python /usr/bin/python3)
         if is_windows:
             python_names = ['python', 'python3', 'py']
         else:
             python_names = ['python3', 'python', 'python3.11', 'python3.10', 'python3.12']
 
-        # Check PATH
         for name in python_names:
             path = shutil.which(name)
             if path:
+                # Skip system Python on macOS/Linux (usually missing packages)
+                if path == '/usr/bin/python3' or path == '/usr/bin/python':
+                    continue
                 self.log_message.emit(f"Using Python: {path}")
                 return path
 
-        # Common locations based on platform
+        # PRIORITY 4: Windows standard Python installations only
         if is_windows:
-            # Windows common Python locations
-            user_home = os.path.expanduser('~')
             common_paths = [
-                # Standard Python installation
                 os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Python', 'Python311', 'python.exe'),
                 os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Python', 'Python310', 'python.exe'),
                 os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Python', 'Python312', 'python.exe'),
-                # Anaconda/Miniconda
-                os.path.join(user_home, 'anaconda3', 'python.exe'),
-                os.path.join(user_home, 'miniconda3', 'python.exe'),
-                os.path.join(user_home, 'Anaconda3', 'python.exe'),
-                os.path.join(user_home, 'Miniconda3', 'python.exe'),
-                # Program Files
                 r'C:\Python311\python.exe',
                 r'C:\Python310\python.exe',
                 r'C:\Python312\python.exe',
             ]
-        else:
-            # Unix/Mac common Python locations
-            common_paths = [
-                '/usr/bin/python3',
-                '/usr/local/bin/python3',
-                '/opt/homebrew/bin/python3',
-                os.path.expanduser('~/miniforge3/bin/python'),
-                os.path.expanduser('~/miniconda3/bin/python'),
-                os.path.expanduser('~/anaconda3/bin/python'),
-            ]
 
-        for path in common_paths:
-            if path and os.path.exists(path):
-                self.log_message.emit(f"Using Python: {path}")
-                return path
+            for path in common_paths:
+                if path and os.path.exists(path):
+                    self.log_message.emit(f"Using Python: {path}")
+                    return path
 
-        # Fallback based on platform
-        fallback = 'python' if is_windows else 'python3'
-        self.log_message.emit(f"Warning: Could not find Python interpreter, trying '{fallback}'")
-        return fallback
+        # No suitable Python found - user needs to configure in General settings
+        return None
 
     def _find_openbench_script(self) -> Optional[str]:
         """Find the OpenBench main script."""

@@ -391,7 +391,8 @@ class ConfigManager:
         )
         copied_files.update(sim_copied)
 
-        # Copy model definition files for sim
+        # Copy model definition files for sim (into models/ subdirectory)
+        sim_models_dir = os.path.join(sim_nml_dir, "models")
         for model_path in sim_model_files:
             if model_path:
                 # Try to find the actual file (handle .nml -> .yaml conversion)
@@ -399,7 +400,7 @@ class ConfigManager:
                 if actual_path and os.path.exists(actual_path):
                     # Always use .yaml extension for output
                     model_name = os.path.splitext(os.path.basename(actual_path))[0] + ".yaml"
-                    dest_path = os.path.join(sim_nml_dir, model_name)
+                    dest_path = os.path.join(sim_models_dir, model_name)
                     self._copy_model_definition(actual_path, dest_path, selected_items)
                     copied_files[f"model_{model_name}"] = dest_path
 
@@ -559,10 +560,11 @@ class ConfigManager:
                 general["fulllist"] = to_absolute_path(general["fulllist"], openbench_root)
             if "model_namelist" in general and general["model_namelist"]:
                 model_path = to_absolute_path(general["model_namelist"], openbench_root)
-                # Update to point to local nml directory
+                # Update to point to models subdirectory to avoid conflicts with case files
                 model_basename = os.path.splitext(os.path.basename(model_path))[0]
                 dest_dir = os.path.dirname(dest_path)
-                general["model_namelist"] = os.path.join(dest_dir, model_basename + ".yaml")
+                models_dir = os.path.join(dest_dir, "models")
+                general["model_namelist"] = os.path.join(models_dir, model_basename + ".yaml")
 
             filtered["general"] = general
 
@@ -642,10 +644,11 @@ class ConfigManager:
                 general["fulllist"] = to_absolute_path(general["fulllist"], openbench_root)
             if "model_namelist" in general and general["model_namelist"]:
                 model_path = to_absolute_path(general["model_namelist"], openbench_root)
-                # Update to point to local nml directory
+                # Update to point to models subdirectory to avoid conflicts with case files
                 model_basename = os.path.splitext(os.path.basename(model_path))[0]
                 dest_dir = os.path.dirname(dest_path)
-                general["model_namelist"] = os.path.join(dest_dir, model_basename + ".yaml")
+                models_dir = os.path.join(dest_dir, "models")
+                general["model_namelist"] = os.path.join(models_dir, model_basename + ".yaml")
 
             # Remove UI-only field from output
             general.pop("per_var_time_range", None)
@@ -734,10 +737,11 @@ class ConfigManager:
                 general["fulllist"] = to_absolute_path(general["fulllist"], openbench_root)
             if "model_namelist" in general and general["model_namelist"]:
                 model_path = to_absolute_path(general["model_namelist"], openbench_root)
-                # Update to point to local nml directory (always use .yaml extension)
+                # Update to point to models subdirectory to avoid conflicts with case files
                 model_basename = os.path.splitext(os.path.basename(model_path))[0]
                 dest_dir = os.path.dirname(dest_path)
-                general["model_namelist"] = os.path.join(dest_dir, model_basename + ".yaml")
+                models_dir = os.path.join(dest_dir, "models")
+                general["model_namelist"] = os.path.join(models_dir, model_basename + ".yaml")
 
             filtered["general"] = general
 
