@@ -391,3 +391,205 @@ test_env                 /home/user/miniforge3/envs/test_env
         home = manager._get_home_dir()
 
         assert home == "/home/testuser"
+
+
+class TestSSHManagerJump:
+    """Test multi-hop SSH connection."""
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_connect_with_jump(self, mock_ssh_class):
+        """Test connection through jump server."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        # First call returns main client, second returns jump client
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+        manager.connect_with_jump("node110")
+
+        mock_transport.open_channel.assert_called_once()
+        assert manager.is_jump_connected
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_connect_with_jump_password(self, mock_ssh_class):
+        """Test jump connection with password authentication."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+        manager.connect_with_jump("node110", main_password="node_secret")
+
+        # Verify jump client was connected with password
+        mock_jump_client.connect.assert_called_once()
+        call_kwargs = mock_jump_client.connect.call_args[1]
+        assert call_kwargs['password'] == "node_secret"
+        assert call_kwargs['sock'] == mock_channel
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_connect_with_jump_key_file(self, mock_ssh_class):
+        """Test jump connection with SSH key authentication."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+        manager.connect_with_jump("node110", main_key_file="/path/to/key")
+
+        # Verify jump client was connected with key file
+        mock_jump_client.connect.assert_called_once()
+        call_kwargs = mock_jump_client.connect.call_args[1]
+        assert call_kwargs['key_filename'] == "/path/to/key"
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_connect_with_jump_internal_trust(self, mock_ssh_class):
+        """Test jump connection with internal trust (no auth needed)."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+        # No password or key - internal trust
+        manager.connect_with_jump("node110")
+
+        # Verify jump client was connected with agent/keys enabled
+        mock_jump_client.connect.assert_called_once()
+        call_kwargs = mock_jump_client.connect.call_args[1]
+        assert call_kwargs['allow_agent'] is True
+        assert call_kwargs['look_for_keys'] is True
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_disconnect_jump(self, mock_ssh_class):
+        """Test disconnecting from jump server."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+        manager.connect_with_jump("node110")
+
+        manager.disconnect_jump()
+
+        mock_jump_client.close.assert_called_once()
+        mock_channel.close.assert_called_once()
+        assert not manager.is_jump_connected
+        # Main connection should still be active
+        assert manager.is_connected
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_connect_with_jump_requires_main_connection(self, mock_ssh_class):
+        """Test that jump connection requires main connection first."""
+        manager = SSHManager()
+
+        with pytest.raises(SSHConnectionError) as exc_info:
+            manager.connect_with_jump("node110")
+
+        assert "Must connect to main server first" in str(exc_info.value)
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_get_active_client_returns_jump_when_connected(self, mock_ssh_class):
+        """Test get_active_client returns jump client when connected."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+
+        # Before jump connection, should return main client
+        assert manager.get_active_client() == mock_main_client
+
+        manager.connect_with_jump("node110")
+
+        # After jump connection, should return jump client
+        assert manager.get_active_client() == mock_jump_client
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_execute_uses_active_client(self, mock_ssh_class):
+        """Test execute uses the active client (jump or main)."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        # Mock exec_command for jump client
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+        mock_stdout.read.return_value = b"output\n"
+        mock_stderr.read.return_value = b""
+        mock_stdout.channel.recv_exit_status.return_value = 0
+        mock_jump_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+        manager.connect_with_jump("node110")
+
+        stdout, stderr, exit_code = manager.execute("echo test")
+
+        # Should use jump client for execution
+        mock_jump_client.exec_command.assert_called_once()
+        assert stdout == "output\n"
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_full_disconnect_cleans_up_both(self, mock_ssh_class):
+        """Test disconnect cleans up both main and jump connections."""
+        mock_main_client = MagicMock()
+        mock_jump_client = MagicMock()
+        mock_transport = MagicMock()
+        mock_channel = MagicMock()
+
+        mock_ssh_class.side_effect = [mock_main_client, mock_jump_client]
+        mock_main_client.get_transport.return_value = mock_transport
+        mock_transport.open_channel.return_value = mock_channel
+
+        manager = SSHManager()
+        manager.connect("user@mainserver", password="secret")
+        manager.connect_with_jump("node110")
+
+        manager.disconnect()
+
+        mock_jump_client.close.assert_called_once()
+        mock_channel.close.assert_called_once()
+        mock_main_client.close.assert_called_once()
+        assert not manager.is_connected
+        assert not manager.is_jump_connected

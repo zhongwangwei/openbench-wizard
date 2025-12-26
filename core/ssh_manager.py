@@ -33,6 +33,9 @@ class SSHManager:
         self._host = ""
         self._user = ""
         self._port = 22
+        # Multi-hop connection attributes
+        self._jump_client: Optional[SSHClient] = None
+        self._jump_channel = None
 
     @property
     def is_connected(self) -> bool:
@@ -121,7 +124,13 @@ class SSHManager:
             raise SSHConnectionError(f"Connection failed: {e}")
 
     def disconnect(self) -> None:
-        """Disconnect from server."""
+        """Disconnect from server.
+
+        Cleans up both main and jump connections if present.
+        """
+        # First disconnect jump connection if present
+        self.disconnect_jump()
+
         if self._sftp:
             try:
                 self._sftp.close()
@@ -150,8 +159,127 @@ class SSHManager:
         except Exception:
             return False
 
+    @property
+    def is_jump_connected(self) -> bool:
+        """Check if connected to jump/compute node."""
+        if self._jump_client is None:
+            return False
+        try:
+            transport = self._jump_client.get_transport()
+            return transport is not None and transport.is_active()
+        except Exception:
+            return False
+
+    def connect_with_jump(
+        self,
+        main_host: str,
+        jump_host: Optional[str] = None,
+        jump_password: Optional[str] = None,
+        jump_key_file: Optional[str] = None,
+        main_password: Optional[str] = None,
+        main_key_file: Optional[str] = None
+    ) -> None:
+        """Connect to main/compute node through jump server.
+
+        This method supports multi-hop SSH connections where:
+        - The jump server is already connected (self._client)
+        - The main_host is the target compute node to connect to
+
+        Args:
+            main_host: Target node name or address (e.g., "node110")
+            jump_host: Not used when called after connect() - for API compatibility
+            jump_password: Not used - for API compatibility
+            jump_key_file: Not used - for API compatibility
+            main_password: Password for main/compute node (None for internal trust)
+            main_key_file: SSH key file for main/compute node
+
+        Raises:
+            SSHConnectionError: If connection fails
+        """
+        if not self.is_connected:
+            raise SSHConnectionError("Must connect to main server first")
+
+        try:
+            # Open channel to node through main server
+            transport = self._client.get_transport()
+            dest_addr = (main_host, 22)
+            local_addr = ('127.0.0.1', 0)
+            self._jump_channel = transport.open_channel(
+                "direct-tcpip", dest_addr, local_addr
+            )
+
+            # Connect through the channel
+            self._jump_client = paramiko.SSHClient()
+            self._jump_client.set_missing_host_key_policy(AutoAddPolicy())
+
+            if main_password:
+                # Password authentication for compute node
+                self._jump_client.connect(
+                    hostname=main_host,
+                    username=self._user,
+                    password=main_password,
+                    sock=self._jump_channel,
+                    timeout=self._timeout,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            elif main_key_file:
+                # SSH key authentication for compute node
+                self._jump_client.connect(
+                    hostname=main_host,
+                    username=self._user,
+                    key_filename=main_key_file,
+                    sock=self._jump_channel,
+                    timeout=self._timeout,
+                    allow_agent=False,
+                    look_for_keys=False
+                )
+            else:
+                # Internal trust - try without explicit auth
+                # (relies on SSH agent or authorized_keys on compute node)
+                self._jump_client.connect(
+                    hostname=main_host,
+                    username=self._user,
+                    sock=self._jump_channel,
+                    timeout=self._timeout,
+                    allow_agent=True,
+                    look_for_keys=True
+                )
+        except Exception as e:
+            self._jump_client = None
+            self._jump_channel = None
+            raise SSHConnectionError(f"Jump connection failed: {e}")
+
+    def disconnect_jump(self) -> None:
+        """Disconnect from compute node (jump connection)."""
+        if self._jump_client:
+            try:
+                self._jump_client.close()
+            except Exception:
+                pass
+            self._jump_client = None
+
+        if self._jump_channel:
+            try:
+                self._jump_channel.close()
+            except Exception:
+                pass
+            self._jump_channel = None
+
+    def get_active_client(self) -> Optional[SSHClient]:
+        """Get the active SSH client (jump or main).
+
+        Returns:
+            Active SSH client for command execution
+        """
+        if self.is_jump_connected:
+            return self._jump_client
+        return self._client
+
     def execute(self, command: str, timeout: Optional[int] = None) -> Tuple[str, str, int]:
         """Execute command on remote server.
+
+        Uses the active client (jump client if connected, otherwise main client).
 
         Args:
             command: Command to execute
@@ -163,11 +291,12 @@ class SSHManager:
         Raises:
             SSHConnectionError: If not connected
         """
-        if not self.is_connected:
+        client = self.get_active_client()
+        if client is None:
             raise SSHConnectionError("Not connected to server")
 
         try:
-            stdin, stdout, stderr = self._client.exec_command(
+            stdin, stdout, stderr = client.exec_command(
                 command,
                 timeout=timeout or self._timeout
             )
@@ -187,6 +316,8 @@ class SSHManager:
     ) -> Generator[str, None, int]:
         """Execute command and stream output.
 
+        Uses the active client (jump client if connected, otherwise main client).
+
         Args:
             command: Command to execute
             callback: Optional callback for each line of output
@@ -197,10 +328,11 @@ class SSHManager:
         Returns:
             Exit code
         """
-        if not self.is_connected:
+        client = self.get_active_client()
+        if client is None:
             raise SSHConnectionError("Not connected to server")
 
-        transport = self._client.get_transport()
+        transport = client.get_transport()
         channel = transport.open_session()
         channel.exec_command(command)
 
