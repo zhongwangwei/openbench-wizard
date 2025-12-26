@@ -121,3 +121,146 @@ class FilePathGenerator:
             return paths
 
         return []
+
+
+class LocalNetCDFValidator:
+    """Validate NetCDF files locally using xarray."""
+
+    # Common dimension names
+    TIME_DIMS = ['time', 'Time', 'TIME', 't', 'date']
+    LAT_DIMS = ['lat', 'latitude', 'Lat', 'LAT', 'y']
+    LON_DIMS = ['lon', 'longitude', 'Lon', 'LON', 'x']
+
+    def check_file_exists(self, path: str) -> ValidationCheck:
+        """Check if file exists."""
+        exists = os.path.exists(path)
+        if exists:
+            return ValidationCheck("file_exists", True, f"文件存在: {path}")
+        return ValidationCheck("file_exists", False, f"文件不存在: {path}")
+
+    def check_variable(self, path: str, varname: str) -> ValidationCheck:
+        """Check if variable exists in NetCDF file."""
+        try:
+            import xarray as xr
+        except ImportError:
+            return ValidationCheck(
+                "variable_exists", False,
+                "需要安装 xarray: pip install xarray netCDF4"
+            )
+
+        try:
+            ds = xr.open_dataset(path)
+            available_vars = list(ds.data_vars)
+            ds.close()
+
+            if varname in available_vars:
+                return ValidationCheck("variable_exists", True, f"变量 '{varname}' 存在")
+            return ValidationCheck(
+                "variable_exists", False,
+                f"变量 '{varname}' 不存在，可用变量: {available_vars}"
+            )
+        except Exception as e:
+            return ValidationCheck("variable_exists", False, f"无法读取文件: {e}")
+
+    def _find_dim(self, ds, candidates: List[str]) -> Optional[str]:
+        """Find a dimension by trying common names."""
+        for name in candidates:
+            if name in ds.dims or name in ds.coords:
+                return name
+        return None
+
+    def check_time_range(
+        self, path: str, syear: int, eyear: int
+    ) -> ValidationCheck:
+        """Check if data time range covers required period."""
+        try:
+            import xarray as xr
+            import pandas as pd
+        except ImportError:
+            return ValidationCheck(
+                "time_range", False,
+                "需要安装 xarray: pip install xarray netCDF4"
+            )
+
+        try:
+            ds = xr.open_dataset(path)
+            time_dim = self._find_dim(ds, self.TIME_DIMS)
+
+            if time_dim is None:
+                ds.close()
+                return ValidationCheck(
+                    "time_range", False,
+                    f"未找到时间维度，尝试了: {self.TIME_DIMS}"
+                )
+
+            time_vals = ds[time_dim].values
+            ds.close()
+
+            # Convert to years
+            time_years = pd.to_datetime(time_vals).year
+            data_syear = int(time_years.min())
+            data_eyear = int(time_years.max())
+
+            if data_syear <= syear and data_eyear >= eyear:
+                return ValidationCheck(
+                    "time_range", True,
+                    f"时间范围满足: 数据 {data_syear}-{data_eyear}, 需要 {syear}-{eyear}"
+                )
+            return ValidationCheck(
+                "time_range", False,
+                f"时间范围不足: 数据 {data_syear}-{data_eyear}, 需要 {syear}-{eyear}"
+            )
+        except Exception as e:
+            return ValidationCheck("time_range", False, f"时间检查失败: {e}")
+
+    def check_spatial_range(
+        self, path: str,
+        min_lat: float, max_lat: float,
+        min_lon: float, max_lon: float
+    ) -> ValidationCheck:
+        """Check if data spatial range covers required area."""
+        try:
+            import xarray as xr
+        except ImportError:
+            return ValidationCheck(
+                "spatial_range", False,
+                "需要安装 xarray: pip install xarray netCDF4"
+            )
+
+        try:
+            ds = xr.open_dataset(path)
+            lat_dim = self._find_dim(ds, self.LAT_DIMS)
+            lon_dim = self._find_dim(ds, self.LON_DIMS)
+
+            if lat_dim is None or lon_dim is None:
+                ds.close()
+                return ValidationCheck(
+                    "spatial_range", False,
+                    f"未找到经纬度维度"
+                )
+
+            lat_vals = ds[lat_dim].values
+            lon_vals = ds[lon_dim].values
+            ds.close()
+
+            data_min_lat, data_max_lat = float(lat_vals.min()), float(lat_vals.max())
+            data_min_lon, data_max_lon = float(lon_vals.min()), float(lon_vals.max())
+
+            lat_ok = data_min_lat <= min_lat and data_max_lat >= max_lat
+            lon_ok = data_min_lon <= min_lon and data_max_lon >= max_lon
+
+            if lat_ok and lon_ok:
+                return ValidationCheck(
+                    "spatial_range", True,
+                    f"空间范围满足"
+                )
+
+            msg_parts = []
+            if not lat_ok:
+                msg_parts.append(f"纬度: 数据 {data_min_lat:.1f}~{data_max_lat:.1f}, 需要 {min_lat:.1f}~{max_lat:.1f}")
+            if not lon_ok:
+                msg_parts.append(f"经度: 数据 {data_min_lon:.1f}~{data_max_lon:.1f}, 需要 {min_lon:.1f}~{max_lon:.1f}")
+
+            return ValidationCheck("spatial_range", False, "空间范围不足: " + "; ".join(msg_parts))
+        except Exception as e:
+            return ValidationCheck("spatial_range", False, f"空间检查失败: {e}")
