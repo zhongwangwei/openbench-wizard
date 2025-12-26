@@ -122,3 +122,30 @@ class FieldValidator:
         if value < min_val or value > max_val:
             return ValidationError(field_name, message, page_id, widget)
         return None
+
+    @staticmethod
+    def min_max(
+        min_value: float,
+        max_value: float,
+        field_name: str,
+        message: str,
+        page_id: str = "",
+        widget: QWidget = None
+    ) -> Optional[ValidationError]:
+        """
+        Validate that min value is less than or equal to max value.
+
+        Args:
+            min_value: Minimum value
+            max_value: Maximum value
+            field_name: Name of the field
+            message: Error message if validation fails
+            page_id: Page ID for error context
+            widget: Widget to focus on error (usually the min field)
+
+        Returns:
+            ValidationError if min > max, None if valid
+        """
+        if min_value > max_value:
+            return ValidationError(field_name, message, page_id, widget)
+        return None

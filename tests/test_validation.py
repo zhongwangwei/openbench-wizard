@@ -146,3 +146,31 @@ class TestFieldValidatorNumberRange:
         """Test number above maximum fails."""
         error = FieldValidator.number_range(100.0, -90.0, 90.0, "latitude", "纬度范围无效（-90 到 90）")
         assert error is not None
+
+
+class TestFieldValidatorComparison:
+    """Test FieldValidator comparison methods."""
+
+    def test_min_max_valid(self):
+        """Test min <= max passes."""
+        error = FieldValidator.min_max(2000, 2020, "year", "起始年份不能大于结束年份")
+        assert error is None
+
+    def test_min_max_equal(self):
+        """Test min == max passes."""
+        error = FieldValidator.min_max(2010, 2010, "year", "起始年份不能大于结束年份")
+        assert error is None
+
+    def test_min_max_invalid(self):
+        """Test min > max fails."""
+        error = FieldValidator.min_max(2020, 2000, "year", "起始年份不能大于结束年份")
+        assert error is not None
+        assert "起始年份不能大于结束年份" in error.message
+
+    def test_min_max_with_floats(self):
+        """Test min/max with float values."""
+        error = FieldValidator.min_max(-90.0, 90.0, "latitude", "最小值不能大于最大值")
+        assert error is None
+
+        error = FieldValidator.min_max(90.0, -90.0, "latitude", "最小值不能大于最大值")
+        assert error is not None
