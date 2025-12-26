@@ -6,6 +6,7 @@ Validates file existence, variable names, time range, and spatial range.
 Supports both local and remote (SSH) validation.
 """
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
@@ -264,3 +265,149 @@ class LocalNetCDFValidator:
             return ValidationCheck("spatial_range", False, "空间范围不足: " + "; ".join(msg_parts))
         except Exception as e:
             return ValidationCheck("spatial_range", False, f"空间检查失败: {e}")
+
+
+class RemoteNetCDFValidator:
+    """Validate NetCDF files on remote server via SSH."""
+
+    # Python script template for remote execution
+    INSPECT_SCRIPT = '''
+import json
+import sys
+try:
+    import xarray as xr
+    import pandas as pd
+    ds = xr.open_dataset("{path}")
+    result = {{"success": True}}
+    result["variables"] = list(ds.data_vars)
+
+    # Find time dimension
+    time_dims = ['time', 'Time', 'TIME', 't', 'date']
+    for td in time_dims:
+        if td in ds.dims or td in ds.coords:
+            time_vals = pd.to_datetime(ds[td].values)
+            result["time_range"] = [int(time_vals.year.min()), int(time_vals.year.max())]
+            break
+
+    # Find lat/lon dimensions
+    lat_dims = ['lat', 'latitude', 'Lat', 'LAT', 'y']
+    lon_dims = ['lon', 'longitude', 'Lon', 'LON', 'x']
+    for ld in lat_dims:
+        if ld in ds.dims or ld in ds.coords:
+            result["lat_range"] = [float(ds[ld].values.min()), float(ds[ld].values.max())]
+            break
+    for ld in lon_dims:
+        if ld in ds.dims or ld in ds.coords:
+            result["lon_range"] = [float(ds[ld].values.min()), float(ds[ld].values.max())]
+            break
+
+    ds.close()
+    print(json.dumps(result))
+except ImportError as e:
+    print(json.dumps({{"success": False, "error": "xarray not installed"}}))
+except Exception as e:
+    print(json.dumps({{"success": False, "error": str(e)}}))
+'''
+
+    def __init__(self, ssh_manager):
+        """Initialize with SSH manager.
+
+        Args:
+            ssh_manager: SSHManager instance for remote execution
+        """
+        self._ssh = ssh_manager
+
+    def check_file_exists(self, path: str) -> ValidationCheck:
+        """Check if file exists on remote server."""
+        try:
+            stdout, stderr, exit_code = self._ssh.execute(f"test -f '{path}'", timeout=10)
+            if exit_code == 0:
+                return ValidationCheck("file_exists", True, f"文件存在: {path}")
+            return ValidationCheck("file_exists", False, f"文件不存在: {path}")
+        except Exception as e:
+            return ValidationCheck("file_exists", False, f"远程检查失败: {e}")
+
+    def _run_inspect_script(self, path: str) -> Optional[Dict[str, Any]]:
+        """Run inspection script on remote server."""
+        script = self.INSPECT_SCRIPT.format(path=path)
+        cmd = f"python3 -c '{script}'"
+
+        try:
+            stdout, stderr, exit_code = self._ssh.execute(cmd, timeout=30)
+            if exit_code == 0 and stdout.strip():
+                return json.loads(stdout.strip())
+        except Exception:
+            pass
+        return None
+
+    def check_variable(self, path: str, varname: str) -> ValidationCheck:
+        """Check if variable exists in remote NetCDF file."""
+        result = self._run_inspect_script(path)
+
+        if result is None:
+            return ValidationCheck("variable_exists", False, "远程检查失败")
+
+        if not result.get("success"):
+            error = result.get("error", "未知错误")
+            return ValidationCheck("variable_exists", False, f"远程错误: {error}")
+
+        variables = result.get("variables", [])
+        if varname in variables:
+            return ValidationCheck("variable_exists", True, f"变量 '{varname}' 存在")
+        return ValidationCheck(
+            "variable_exists", False,
+            f"变量 '{varname}' 不存在，可用变量: {variables}"
+        )
+
+    def check_time_range(self, path: str, syear: int, eyear: int) -> ValidationCheck:
+        """Check time range on remote file."""
+        result = self._run_inspect_script(path)
+
+        if result is None or not result.get("success"):
+            return ValidationCheck("time_range", False, "远程时间检查失败")
+
+        time_range = result.get("time_range")
+        if time_range is None:
+            return ValidationCheck("time_range", False, "未找到时间维度")
+
+        data_syear, data_eyear = time_range
+        if data_syear <= syear and data_eyear >= eyear:
+            return ValidationCheck(
+                "time_range", True,
+                f"时间范围满足: 数据 {data_syear}-{data_eyear}"
+            )
+        return ValidationCheck(
+            "time_range", False,
+            f"时间范围不足: 数据 {data_syear}-{data_eyear}, 需要 {syear}-{eyear}"
+        )
+
+    def check_spatial_range(
+        self, path: str,
+        min_lat: float, max_lat: float,
+        min_lon: float, max_lon: float
+    ) -> ValidationCheck:
+        """Check spatial range on remote file."""
+        result = self._run_inspect_script(path)
+
+        if result is None or not result.get("success"):
+            return ValidationCheck("spatial_range", False, "远程空间检查失败")
+
+        lat_range = result.get("lat_range")
+        lon_range = result.get("lon_range")
+
+        if lat_range is None or lon_range is None:
+            return ValidationCheck("spatial_range", False, "未找到经纬度维度")
+
+        data_min_lat, data_max_lat = lat_range
+        data_min_lon, data_max_lon = lon_range
+
+        lat_ok = data_min_lat <= min_lat and data_max_lat >= max_lat
+        lon_ok = data_min_lon <= min_lon and data_max_lon >= max_lon
+
+        if lat_ok and lon_ok:
+            return ValidationCheck("spatial_range", True, "空间范围满足")
+
+        return ValidationCheck(
+            "spatial_range", False,
+            f"空间范围不足"
+        )

@@ -339,3 +339,223 @@ class TestLocalNetCDFValidator:
         assert hasattr(LocalNetCDFValidator, 'LON_DIMS')
         assert 'lon' in LocalNetCDFValidator.LON_DIMS
         assert 'longitude' in LocalNetCDFValidator.LON_DIMS
+
+
+import json
+from core.data_validator import RemoteNetCDFValidator
+
+
+class TestRemoteNetCDFValidator:
+    """Test remote NetCDF validation via SSH."""
+
+    def test_check_file_exists_remote(self):
+        """Test remote file exists check."""
+        mock_ssh = Mock()
+        mock_ssh.execute.return_value = ("", "", 0)  # exit code 0 = exists
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_file_exists("/remote/data/file.nc")
+
+        assert check.passed is True
+        mock_ssh.execute.assert_called_once()
+
+    def test_check_file_not_exists_remote(self):
+        """Test remote file not exists."""
+        mock_ssh = Mock()
+        mock_ssh.execute.return_value = ("", "", 1)  # exit code 1 = not exists
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_file_exists("/remote/data/file.nc")
+
+        assert check.passed is False
+
+    def test_check_file_exists_ssh_error(self):
+        """Test remote file check when SSH fails."""
+        mock_ssh = Mock()
+        mock_ssh.execute.side_effect = Exception("SSH connection failed")
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_file_exists("/remote/data/file.nc")
+
+        assert check.passed is False
+        assert "远程检查失败" in check.message
+
+    def test_check_variable_remote(self):
+        """Test remote variable check."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "variables": ["ET", "precipitation", "temperature"]
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_variable("/remote/file.nc", "ET")
+
+        assert check.passed is True
+
+    def test_check_variable_not_exists_remote(self):
+        """Test remote variable check when variable not found."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "variables": ["precipitation", "temperature"]
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_variable("/remote/file.nc", "ET")
+
+        assert check.passed is False
+        assert "ET" in check.message
+        assert "不存在" in check.message
+
+    def test_check_variable_remote_error(self):
+        """Test remote variable check when script fails."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": False,
+            "error": "xarray not installed"
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_variable("/remote/file.nc", "ET")
+
+        assert check.passed is False
+        assert "远程错误" in check.message
+
+    def test_check_time_range_remote(self):
+        """Test remote time range check."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "time_range": [2000, 2020]
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_time_range("/remote/file.nc", 2005, 2015)
+
+        assert check.passed is True
+
+    def test_check_time_range_remote_insufficient(self):
+        """Test remote time range check when data doesn't cover required period."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "time_range": [2010, 2015]
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_time_range("/remote/file.nc", 2000, 2020)
+
+        assert check.passed is False
+        assert "时间范围不足" in check.message
+
+    def test_check_time_range_remote_no_time_dim(self):
+        """Test remote time range check when no time dimension found."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "variables": ["ET"]
+            # No time_range key
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_time_range("/remote/file.nc", 2000, 2020)
+
+        assert check.passed is False
+        assert "未找到时间维度" in check.message
+
+    def test_check_spatial_range_remote(self):
+        """Test remote spatial range check."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "lat_range": [-90.0, 90.0],
+            "lon_range": [-180.0, 180.0]
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_spatial_range("/remote/file.nc", -45, 45, -90, 90)
+
+        assert check.passed is True
+
+    def test_check_spatial_range_remote_insufficient(self):
+        """Test remote spatial range check when data doesn't cover required area."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "lat_range": [0.0, 90.0],  # Only northern hemisphere
+            "lon_range": [0.0, 180.0]  # Only eastern hemisphere
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_spatial_range("/remote/file.nc", -45, 45, -90, 90)
+
+        assert check.passed is False
+        assert "空间范围不足" in check.message
+
+    def test_check_spatial_range_remote_no_lat_lon(self):
+        """Test remote spatial range check when no lat/lon dimensions found."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "variables": ["ET"]
+            # No lat_range or lon_range keys
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        check = validator.check_spatial_range("/remote/file.nc", -45, 45, -90, 90)
+
+        assert check.passed is False
+        assert "未找到经纬度维度" in check.message
+
+    def test_inspect_script_exists(self):
+        """Test that INSPECT_SCRIPT attribute is defined."""
+        mock_ssh = Mock()
+        validator = RemoteNetCDFValidator(mock_ssh)
+        assert hasattr(validator, 'INSPECT_SCRIPT')
+        assert isinstance(validator.INSPECT_SCRIPT, str)
+        assert "xarray" in validator.INSPECT_SCRIPT
+
+    def test_run_inspect_script_returns_dict(self):
+        """Test _run_inspect_script helper method returns dict or None."""
+        mock_ssh = Mock()
+        result_json = json.dumps({
+            "success": True,
+            "variables": ["ET"]
+        })
+        mock_ssh.execute.return_value = (result_json, "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        result = validator._run_inspect_script("/remote/file.nc")
+
+        assert isinstance(result, dict)
+        assert result["success"] is True
+
+    def test_run_inspect_script_handles_invalid_json(self):
+        """Test _run_inspect_script returns None for invalid JSON."""
+        mock_ssh = Mock()
+        mock_ssh.execute.return_value = ("not valid json", "", 0)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        result = validator._run_inspect_script("/remote/file.nc")
+
+        assert result is None
+
+    def test_run_inspect_script_handles_ssh_failure(self):
+        """Test _run_inspect_script returns None on SSH failure."""
+        mock_ssh = Mock()
+        mock_ssh.execute.return_value = ("", "error", 1)
+
+        validator = RemoteNetCDFValidator(mock_ssh)
+        result = validator._run_inspect_script("/remote/file.nc")
+
+        assert result is None
