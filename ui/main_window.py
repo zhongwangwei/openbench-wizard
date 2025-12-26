@@ -3,6 +3,7 @@
 Main window with sidebar navigation and page container.
 """
 
+import logging
 import os
 import yaml
 
@@ -10,20 +11,23 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QListWidget, QListWidgetItem, QStackedWidget,
     QPushButton, QLabel, QFrame, QMessageBox,
-    QFileDialog, QSplitter
+    QFileDialog, QSplitter, QDialog
 )
 from PySide6.QtCore import Qt, QSize
 
 from ui.wizard_controller import WizardController
+from ui.widgets.remote_config import RemoteFileBrowser
 from core.path_utils import (
     get_openbench_root, to_absolute_path, convert_paths_in_dict,
     validate_paths_in_dict, normalize_path_separators
 )
 from ui.pages import (
-    PageGeneral, PageEvaluation, PageMetrics, PageScores,
+    PageRuntime, PageGeneral, PageEvaluation, PageMetrics, PageScores,
     PageComparisons, PageStatistics, PageRefData, PageSimData,
     PagePreview, PageRunMonitor
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -184,6 +188,7 @@ class MainWindow(QMainWindow):
         self.pages = {}
 
         page_classes = {
+            "runtime": PageRuntime,
             "general": PageGeneral,
             "evaluation_items": PageEvaluation,
             "metrics": PageMetrics,
@@ -280,10 +285,33 @@ class MainWindow(QMainWindow):
             # Get page_id first before any operations that might invalidate the item
             page_id = item.data(Qt.UserRole)
 
+            # Don't validate if navigating to current page (no change)
+            if page_id == self.controller.current_page:
+                return
+
+            # Validate current page before navigating away
+            current_page = self.pages.get(self.controller.current_page)
+            if current_page and callable(getattr(current_page, 'validate', None)):
+                if not current_page.validate():
+                    # Validation failed - restore sidebar selection to current page
+                    self._restore_nav_selection()
+                    return
+
             # Save current page before switching (without triggering sync)
             self._save_current_page(trigger_sync=False)
 
             self.controller.go_to_page(page_id)
+
+    def _restore_nav_selection(self):
+        """Restore sidebar selection to current page after failed validation."""
+        current_page_id = self.controller.current_page
+        self.nav_list.blockSignals(True)
+        for i in range(self.nav_list.count()):
+            item = self.nav_list.item(i)
+            if item and item.data(Qt.UserRole) == current_page_id:
+                self.nav_list.setCurrentItem(item)
+                break
+        self.nav_list.blockSignals(False)
 
     def _save_current_page(self, trigger_sync: bool = True):
         """Save the current page's data to config."""
@@ -346,27 +374,95 @@ class MainWindow(QMainWindow):
 
     def _on_load_clicked(self):
         """Handle Load Config button click."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Configuration",
-            "",
-            "YAML Files (*.yaml *.yml);;All Files (*)"
-        )
+        # Check if in remote mode
+        general = self.controller.config.get("general", {})
+        if general.get("execution_mode") == "remote":
+            file_path = self._browse_remote_config_file()
+        else:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load Configuration",
+                "",
+                "YAML Files (*.yaml *.yml);;All Files (*)"
+            )
         if file_path:
             self._load_config_file(file_path)
+
+    def _get_remote_ssh_manager(self):
+        """Get SSH manager from the runtime page."""
+        if 'runtime' in self.pages:
+            runtime_page = self.pages['runtime']
+            if hasattr(runtime_page, 'remote_config_widget'):
+                return runtime_page.remote_config_widget.get_ssh_manager()
+        return None
+
+    def _browse_remote_config_file(self) -> str:
+        """Browse remote server for config file."""
+        ssh_manager = self._get_remote_ssh_manager()
+        if not ssh_manager or not ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Not Connected",
+                "Please connect to the remote server first in the Runtime Environment page."
+            )
+            return ""
+
+        # Get start path
+        try:
+            home = ssh_manager._get_home_dir()
+            # Try to find OpenBench nml directory
+            stdout, stderr, exit_code = ssh_manager.execute(
+                f"ls -d {home}/OpenBench/output 2>/dev/null || echo {home}",
+                timeout=10
+            )
+            start_path = stdout.strip() if exit_code == 0 else home
+        except Exception as e:
+            logger.debug("Failed to get remote home directory: %s", e)
+            start_path = "/"
+
+        # Create dialog with remote file browser
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Load Configuration from Remote Server")
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+        browser = RemoteFileBrowser(ssh_manager, start_path, dialog, select_dirs=False)
+        layout.addWidget(browser)
+
+        selected_path = [None]
+
+        def on_path_selected(path):
+            if path.endswith('.yaml') or path.endswith('.yml'):
+                selected_path[0] = path
+                dialog.accept()
+            else:
+                QMessageBox.warning(dialog, "Invalid File", "Please select a YAML file (.yaml or .yml)")
+
+        browser.file_selected.connect(on_path_selected)
+        dialog.exec_()
+
+        return selected_path[0] or ""
 
     def _load_config_file(self, file_path: str):
         """Load configuration from a YAML file."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                loaded_config = yaml.safe_load(f) or {}
+            # Check if in remote mode
+            general = self.controller.config.get("general", {})
+            is_remote = general.get("execution_mode") == "remote"
 
-            # Get the directory of the config file for resolving relative paths
-            config_dir = os.path.dirname(os.path.abspath(file_path))
-            base_dir = os.path.dirname(config_dir)  # Assume nml-yaml is one level down from base
+            if is_remote:
+                loaded_config = self._load_remote_yaml_file(file_path)
+                if loaded_config is None:
+                    return
+                config_dir = file_path.rsplit('/', 1)[0] if '/' in file_path else ""
+                base_dir = config_dir.rsplit('/', 1)[0] if '/' in config_dir else ""
+                project_root = self._find_remote_project_root(config_dir)
+            else:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    loaded_config = yaml.safe_load(f) or {}
+                config_dir = os.path.dirname(os.path.abspath(file_path))
+                base_dir = os.path.dirname(config_dir)
+                project_root = self._find_project_root(config_dir)
 
-            # Determine project root (go up until we find 'openbench' or 'nml' directory)
-            project_root = self._find_project_root(config_dir)
             self.controller.project_root = project_root
 
             # Start with default config
@@ -390,14 +486,24 @@ class MainWindow(QMainWindow):
                 # Unknown format, try to load as-is
                 new_config.update(loaded_config)
 
+            # Preserve runtime settings when in remote mode
+            if is_remote:
+                # Keep current runtime settings (execution_mode, SSH connection, remote config, etc.)
+                current_runtime = self.controller.config.get("general", {})
+                for key in ("execution_mode", "num_cores", "python_path", "conda_env", "remote"):
+                    if key in current_runtime:
+                        new_config["general"][key] = current_runtime[key]
+
             # Update the controller with the new config
             self.controller.config = new_config
 
-            # Navigate to the first page
+            # Navigate to the first page (skip runtime in remote mode)
             self.controller.go_to_page("general")
 
-            # Refresh all pages
-            for page in self.pages.values():
+            # Refresh all pages (skip runtime page in remote mode to preserve SSH connection)
+            for page_id, page in self.pages.items():
+                if is_remote and page_id == "runtime":
+                    continue  # Don't refresh runtime page in remote mode
                 if hasattr(page, 'load_from_config'):
                     page.load_from_config()
 
@@ -438,11 +544,15 @@ class MainWindow(QMainWindow):
         general = loaded_config.get("general", {})
         project_root = self.controller.project_root
 
+        # Check if in remote mode
+        current_general = self.controller.config.get("general", {})
+        is_remote = current_general.get("execution_mode") == "remote"
+
         # Copy general settings and convert paths to absolute
         for key, value in general.items():
             if key not in ("reference_nml", "simulation_nml", "statistics_nml", "figure_nml"):
-                # Convert path fields to absolute
-                if key in ("basedir",) and value:
+                # Convert path fields to absolute (only for local mode)
+                if key in ("basedir",) and value and not is_remote:
                     value = to_absolute_path(value, project_root)
                 new_config["general"][key] = value
 
@@ -454,33 +564,48 @@ class MainWindow(QMainWindow):
         # Load reference NML if specified
         ref_nml_path = general.get("reference_nml", "")
         if ref_nml_path:
-            ref_full_path = self._resolve_path(ref_nml_path, config_dir, base_dir)
-            if ref_full_path and os.path.exists(ref_full_path):
-                try:
-                    with open(ref_full_path, 'r', encoding='utf-8') as f:
-                        ref_config = yaml.safe_load(f) or {}
-                    # Convert all paths in ref_config to absolute
-                    ref_config = convert_paths_in_dict(ref_config, project_root)
-                    new_config["ref_data"] = ref_config
-                except Exception as e:
-                    print(f"Warning: Failed to load reference NML: {e}")
+            if is_remote:
+                ref_full_path = self._resolve_remote_path(ref_nml_path, config_dir, base_dir)
+                if ref_full_path:
+                    ref_config = self._load_remote_yaml_file(ref_full_path)
+                    if ref_config:
+                        new_config["ref_data"] = ref_config
+            else:
+                ref_full_path = self._resolve_path(ref_nml_path, config_dir, base_dir)
+                if ref_full_path and os.path.exists(ref_full_path):
+                    try:
+                        with open(ref_full_path, 'r', encoding='utf-8') as f:
+                            ref_config = yaml.safe_load(f) or {}
+                        # Convert all paths in ref_config to absolute
+                        ref_config = convert_paths_in_dict(ref_config, project_root)
+                        new_config["ref_data"] = ref_config
+                    except Exception as e:
+                        print(f"Warning: Failed to load reference NML: {e}")
 
         # Load simulation NML if specified
         sim_nml_path = general.get("simulation_nml", "")
         if sim_nml_path:
-            sim_full_path = self._resolve_path(sim_nml_path, config_dir, base_dir)
-            if sim_full_path and os.path.exists(sim_full_path):
-                try:
-                    with open(sim_full_path, 'r', encoding='utf-8') as f:
-                        sim_config = yaml.safe_load(f) or {}
-                    # Convert all paths in sim_config to absolute
-                    sim_config = convert_paths_in_dict(sim_config, project_root)
-                    new_config["sim_data"] = sim_config
-                except Exception as e:
-                    print(f"Warning: Failed to load simulation NML: {e}")
+            if is_remote:
+                sim_full_path = self._resolve_remote_path(sim_nml_path, config_dir, base_dir)
+                if sim_full_path:
+                    sim_config = self._load_remote_yaml_file(sim_full_path)
+                    if sim_config:
+                        new_config["sim_data"] = sim_config
+            else:
+                sim_full_path = self._resolve_path(sim_nml_path, config_dir, base_dir)
+                if sim_full_path and os.path.exists(sim_full_path):
+                    try:
+                        with open(sim_full_path, 'r', encoding='utf-8') as f:
+                            sim_config = yaml.safe_load(f) or {}
+                        # Convert all paths in sim_config to absolute
+                        sim_config = convert_paths_in_dict(sim_config, project_root)
+                        new_config["sim_data"] = sim_config
+                    except Exception as e:
+                        print(f"Warning: Failed to load simulation NML: {e}")
 
-        # Validate all paths and warn user about missing ones
-        self._validate_loaded_paths(new_config)
+        # Validate all paths and warn user about missing ones (skip for remote mode)
+        if not is_remote:
+            self._validate_loaded_paths(new_config)
 
     def _resolve_path(self, path: str, config_dir: str, base_dir: str) -> str:
         """Resolve a path that might be relative to different base directories."""
@@ -525,6 +650,61 @@ class MainWindow(QMainWindow):
         # Return the path as-is if nothing works
         return path
 
+    def _resolve_remote_path(self, path: str, config_dir: str, base_dir: str) -> str:
+        """Resolve a path that might be relative on a remote server."""
+        ssh_manager = self._get_remote_ssh_manager()
+        if not ssh_manager or not ssh_manager.is_connected:
+            return path
+
+        # If absolute, check if exists and return
+        if path.startswith('/'):
+            stdout, stderr, exit_code = ssh_manager.execute(
+                f"test -e '{path}' && echo 'exists'", timeout=10
+            )
+            if exit_code == 0 and 'exists' in stdout:
+                return path
+            return path
+
+        # Helper to check if path exists on remote
+        def remote_exists(check_path):
+            stdout, stderr, exit_code = ssh_manager.execute(
+                f"test -e '{check_path}' && echo 'exists'", timeout=10
+            )
+            return exit_code == 0 and 'exists' in stdout
+
+        # Try relative to base_dir first (for paths like ./nml/nml-yaml/...)
+        if path.startswith("./"):
+            relative_path = path[2:]
+
+            # Try from project root
+            project_root = base_dir.rsplit('/', 1)[0] if '/' in base_dir else base_dir
+            full_path = f"{project_root}/{relative_path}"
+            if remote_exists(full_path):
+                return full_path
+
+            # Try from base_dir
+            full_path = f"{base_dir}/{relative_path}"
+            if remote_exists(full_path):
+                return full_path
+
+            # Try from config_dir
+            full_path = f"{config_dir}/{relative_path}"
+            if remote_exists(full_path):
+                return full_path
+
+        # Try relative to config_dir
+        full_path = f"{config_dir}/{path}"
+        if remote_exists(full_path):
+            return full_path
+
+        # Try relative to base_dir
+        full_path = f"{base_dir}/{path}"
+        if remote_exists(full_path):
+            return full_path
+
+        # Return the path as-is if nothing works
+        return path
+
     def _extract_evaluation_items_from_ref(self, ref_config: dict, new_config: dict):
         """Extract evaluation items from ref config source keys."""
         general = ref_config.get("general", {})
@@ -553,6 +733,58 @@ class MainWindow(QMainWindow):
             if parent == current:  # Reached filesystem root
                 break
             current = parent
+        return start_dir  # Fallback to start directory
+
+    def _load_remote_yaml_file(self, file_path: str) -> dict:
+        """Load YAML content from a remote file via SSH."""
+        ssh_manager = self._get_remote_ssh_manager()
+        if not ssh_manager or not ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Not Connected",
+                "Cannot load remote file: SSH connection not available."
+            )
+            return None
+
+        try:
+            stdout, stderr, exit_code = ssh_manager.execute(
+                f"cat '{file_path}'", timeout=30
+            )
+            if exit_code != 0:
+                QMessageBox.critical(
+                    self, "Error",
+                    f"Failed to read remote file:\n{file_path}\n\nError: {stderr}"
+                )
+                return None
+            return yaml.safe_load(stdout) or {}
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error",
+                f"Failed to load remote YAML file:\n{file_path}\n\nError: {str(e)}"
+            )
+            return None
+
+    def _find_remote_project_root(self, start_dir: str) -> str:
+        """Find the OpenBench project root directory on remote server."""
+        ssh_manager = self._get_remote_ssh_manager()
+        if not ssh_manager or not ssh_manager.is_connected:
+            return start_dir
+
+        current = start_dir
+        for _ in range(10):  # Max 10 levels up
+            # Check if this looks like OpenBench root
+            stdout, stderr, exit_code = ssh_manager.execute(
+                f"ls -d '{current}/openbench' '{current}/nml' 2>/dev/null | head -1",
+                timeout=10
+            )
+            if exit_code == 0 and stdout.strip():
+                return current
+
+            # Go up one directory
+            parent = current.rsplit('/', 1)[0] if '/' in current else ""
+            if not parent or parent == current:
+                break
+            current = parent
+
         return start_dir  # Fallback to start directory
 
     def _convert_to_absolute_path(self, path: str, project_root: str) -> str:
