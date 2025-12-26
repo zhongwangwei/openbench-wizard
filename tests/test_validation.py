@@ -3,7 +3,7 @@
 """Tests for validation module."""
 
 import pytest
-from core.validation import ValidationError, ValidationResult
+from core.validation import ValidationError, ValidationResult, FieldValidator
 
 
 class TestValidationError:
@@ -53,3 +53,29 @@ class TestValidationResult:
         result = ValidationResult(is_valid=False, errors=[error])
         assert result.is_valid is False
         assert len(result.errors) == 1
+
+
+class TestFieldValidator:
+    """Test FieldValidator static methods."""
+
+    def test_required_with_empty_string(self):
+        """Test required validation fails for empty string."""
+        error = FieldValidator.required("", "project_name", "项目名称不能为空")
+        assert error is not None
+        assert error.field_name == "project_name"
+        assert error.message == "项目名称不能为空"
+
+    def test_required_with_whitespace_only(self):
+        """Test required validation fails for whitespace only."""
+        error = FieldValidator.required("   ", "project_name", "项目名称不能为空")
+        assert error is not None
+
+    def test_required_with_valid_value(self):
+        """Test required validation passes for valid value."""
+        error = FieldValidator.required("my_project", "project_name", "项目名称不能为空")
+        assert error is None
+
+    def test_required_with_none(self):
+        """Test required validation fails for None."""
+        error = FieldValidator.required(None, "project_name", "项目名称不能为空")
+        assert error is not None

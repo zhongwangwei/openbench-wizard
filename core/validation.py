@@ -27,3 +27,36 @@ class ValidationResult:
     """Validation result containing validity status and errors."""
     is_valid: bool
     errors: List[ValidationError] = field(default_factory=list)
+
+
+class FieldValidator:
+    """Field validator with static methods for common validation rules."""
+
+    @staticmethod
+    def required(
+        value: Any,
+        field_name: str,
+        message: str,
+        page_id: str = "",
+        widget: QWidget = None
+    ) -> Optional[ValidationError]:
+        """
+        Validate that a field is not empty.
+
+        Args:
+            value: The value to validate
+            field_name: Name of the field for error reporting
+            message: Error message if validation fails
+            page_id: Page ID for error context
+            widget: Widget to focus on error
+
+        Returns:
+            ValidationError if invalid, None if valid
+        """
+        if value is None:
+            return ValidationError(field_name, message, page_id, widget)
+
+        if isinstance(value, str) and not value.strip():
+            return ValidationError(field_name, message, page_id, widget)
+
+        return None
