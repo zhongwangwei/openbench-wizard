@@ -45,3 +45,27 @@ class PageScores(BasePage):
         """Save to config."""
         selection = self.checkbox_group.get_selection()
         self.controller.update_section("scores", selection)
+
+    def validate(self) -> bool:
+        """Validate page input - check combined metrics + scores selection."""
+        from core.validation import FieldValidator, ValidationManager
+
+        # Save current selection first
+        self.save_to_config()
+
+        # Get combined selection
+        combined = self.controller.get_combined_metrics_scores_selection()
+
+        error = FieldValidator.selection_required(
+            combined,
+            "metrics_scores",
+            "请至少选择一个指标或评分项",
+            page_id=self.PAGE_ID
+        )
+
+        if error:
+            manager = ValidationManager(self)
+            manager.show_error_and_focus(error)
+            return False
+
+        return True

@@ -21,6 +21,7 @@ class WizardController(QObject):
 
     # All possible pages in order
     ALL_PAGES = [
+        "runtime",
         "general",
         "evaluation_items",
         "metrics",
@@ -35,6 +36,7 @@ class WizardController(QObject):
 
     # Page display names
     PAGE_NAMES = {
+        "runtime": "Runtime Environment",
         "general": "General",
         "evaluation_items": "Evaluation Items",
         "metrics": "Metrics",
@@ -56,10 +58,11 @@ class WizardController(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._config: Dict[str, Any] = self._default_config()
-        self._current_page: str = "general"
+        self._current_page: str = "runtime"
         self._project_root: str = ""
         self._config_manager = ConfigManager()
         self._auto_sync_enabled = True
+        self._ssh_manager = None  # SSH manager for remote mode
 
     @property
     def project_root(self) -> str:
@@ -70,6 +73,16 @@ class WizardController(QObject):
     def project_root(self, value: str):
         """Set project root directory."""
         self._project_root = value
+
+    @property
+    def ssh_manager(self):
+        """Get SSH manager for remote mode."""
+        return self._ssh_manager
+
+    @ssh_manager.setter
+    def ssh_manager(self, value):
+        """Set SSH manager for remote mode."""
+        self._ssh_manager = value
 
     def _default_config(self) -> Dict[str, Any]:
         """Return default configuration structure."""
@@ -220,7 +233,7 @@ class WizardController(QObject):
     def reset(self):
         """Reset to default state."""
         self._config = self._default_config()
-        self._current_page = "general"
+        self._current_page = "runtime"
         self.config_updated.emit(self._config)
         self.pages_visibility_changed.emit()
         self.page_changed.emit(self._current_page)
@@ -305,3 +318,9 @@ class WizardController(QObject):
 
         with open(main_path, 'w', encoding='utf-8') as f:
             f.write(main_content)
+
+    def get_combined_metrics_scores_selection(self) -> Dict[str, bool]:
+        """Get combined selection from metrics and scores pages."""
+        metrics = self._config.get("metrics", {})
+        scores = self._config.get("scores", {})
+        return {**metrics, **scores}
