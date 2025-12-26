@@ -559,3 +559,351 @@ class TestRemoteNetCDFValidator:
         result = validator._run_inspect_script("/remote/file.nc")
 
         assert result is None
+
+
+from core.data_validator import DataValidator
+
+
+class TestDataValidator:
+    """Test main DataValidator class."""
+
+    def test_init_local_mode(self):
+        """Test initializing validator in local mode."""
+        validator = DataValidator(is_remote=False)
+        assert validator._is_remote is False
+        assert isinstance(validator._validator, LocalNetCDFValidator)
+
+    def test_init_remote_mode(self):
+        """Test initializing validator in remote mode."""
+        mock_ssh = Mock()
+        validator = DataValidator(is_remote=True, ssh_manager=mock_ssh)
+        assert validator._is_remote is True
+        assert isinstance(validator._validator, RemoteNetCDFValidator)
+
+    def test_init_remote_mode_no_ssh(self):
+        """Test that remote mode without ssh_manager falls back to local."""
+        validator = DataValidator(is_remote=True, ssh_manager=None)
+        # Should fall back to local validator when no ssh_manager
+        assert isinstance(validator._validator, LocalNetCDFValidator)
+
+    def test_validate_source_local(self):
+        """Test validating a source in local mode."""
+        validator = DataValidator(is_remote=False)
+
+        source_config = {
+            "general": {
+                "root_dir": "/data",
+                "data_groupby": "Year",
+                "data_type": "grid"
+            },
+            "sub_dir": "ET",
+            "prefix": "gleam_",
+            "suffix": "",
+            "varname": "E",
+            "syear": 2000,
+            "eyear": 2020
+        }
+        general_config = {
+            "syear": 2000,
+            "eyear": 2020,
+            "min_lat": -90,
+            "max_lat": 90,
+            "min_lon": -180,
+            "max_lon": 180
+        }
+
+        # This will fail because files don't exist, but structure should work
+        result = validator.validate_source(
+            var_name="Evapotranspiration",
+            source_name="GLEAM",
+            source_config=source_config,
+            general_config=general_config
+        )
+
+        assert result.var_name == "Evapotranspiration"
+        assert result.source_name == "GLEAM"
+        assert len(result.checks) > 0  # Should have file_exists check at minimum
+
+    def test_validate_source_with_existing_file(self):
+        """Test validating a source when file exists."""
+        validator = DataValidator(is_remote=False)
+
+        # Create a temporary file for testing
+        with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as f:
+            temp_path = f.name
+            temp_dir = os.path.dirname(temp_path)
+            temp_basename = os.path.basename(temp_path)
+            # Extract prefix and suffix from filename
+            prefix = temp_basename.replace(".nc", "")
+
+        try:
+            source_config = {
+                "general": {
+                    "root_dir": temp_dir,
+                    "data_groupby": "Single",
+                    "data_type": "grid"
+                },
+                "sub_dir": "",
+                "prefix": prefix,
+                "suffix": "",
+                "varname": "ET",
+                "syear": 2000,
+                "eyear": 2020
+            }
+            general_config = {
+                "syear": 2000,
+                "eyear": 2020,
+                "min_lat": -90,
+                "max_lat": 90,
+                "min_lon": -180,
+                "max_lon": 180
+            }
+
+            result = validator.validate_source(
+                var_name="ET",
+                source_name="TestSource",
+                source_config=source_config,
+                general_config=general_config
+            )
+
+            # File should exist
+            file_check = next((c for c in result.checks if c.name == "file_exists"), None)
+            assert file_check is not None
+            assert file_check.passed is True
+        finally:
+            os.unlink(temp_path)
+
+    def test_validate_source_non_grid_type(self):
+        """Test that spatial range check is skipped for non-grid data types."""
+        validator = DataValidator(is_remote=False)
+
+        source_config = {
+            "general": {
+                "root_dir": "/data",
+                "data_groupby": "Single",
+                "data_type": "stn"  # Station data - should skip spatial check
+            },
+            "sub_dir": "",
+            "prefix": "station_data",
+            "suffix": "",
+            "varname": "ET",
+            "syear": 2000,
+            "eyear": 2020
+        }
+        general_config = {
+            "syear": 2000,
+            "eyear": 2020
+        }
+
+        result = validator.validate_source(
+            var_name="ET",
+            source_name="StationData",
+            source_config=source_config,
+            general_config=general_config
+        )
+
+        # Should have file_exists check but no spatial_range check
+        check_names = [c.name for c in result.checks]
+        assert "file_exists" in check_names
+        # Since file doesn't exist, no other checks are performed
+        # But if file existed, spatial_range should NOT be checked for non-grid data
+
+    def test_validate_source_extracts_config_from_general(self):
+        """Test that config values are correctly extracted from nested general section."""
+        validator = DataValidator(is_remote=False)
+
+        source_config = {
+            "general": {
+                "root_dir": "/test/path",
+                "data_groupby": "Month",
+                "data_type": "grid",
+                "syear": 2010,
+                "eyear": 2015
+            },
+            "sub_dir": "subdir",
+            "prefix": "pre_",
+            "suffix": "_suf",
+            "varname": "precip"
+        }
+        general_config = {
+            "syear": 2000,
+            "eyear": 2020
+        }
+
+        result = validator.validate_source(
+            var_name="Precipitation",
+            source_name="GPM",
+            source_config=source_config,
+            general_config=general_config
+        )
+
+        # Check that paths were generated correctly
+        # File exists checks should reference the correct paths
+        file_checks = [c for c in result.checks if c.name == "file_exists"]
+        assert len(file_checks) >= 1
+        # Check that the path includes our configured values
+        assert any("/test/path" in c.message for c in file_checks)
+
+    def test_validate_source_uses_dir_fallback(self):
+        """Test that 'dir' key is used as fallback for 'root_dir'."""
+        validator = DataValidator(is_remote=False)
+
+        source_config = {
+            "general": {
+                "dir": "/fallback/path",  # Using 'dir' instead of 'root_dir'
+                "data_groupby": "Single",
+                "data_type": "grid"
+            },
+            "sub_dir": "",
+            "prefix": "data",
+            "suffix": "",
+            "varname": "ET"
+        }
+        general_config = {
+            "syear": 2000,
+            "eyear": 2020
+        }
+
+        result = validator.validate_source(
+            var_name="ET",
+            source_name="TestSource",
+            source_config=source_config,
+            general_config=general_config
+        )
+
+        file_checks = [c for c in result.checks if c.name == "file_exists"]
+        assert len(file_checks) >= 1
+        assert any("/fallback/path" in c.message for c in file_checks)
+
+    def test_validate_all_empty_sources(self):
+        """Test validate_all with empty sources dict."""
+        validator = DataValidator(is_remote=False)
+
+        report = validator.validate_all(
+            sources={},
+            general_config={"syear": 2000, "eyear": 2020}
+        )
+
+        assert report.total_count == 0
+        assert report.passed_count == 0
+        assert report.failed_count == 0
+
+    def test_validate_all_single_source(self):
+        """Test validate_all with a single source."""
+        validator = DataValidator(is_remote=False)
+
+        sources = {
+            "Evapotranspiration": {
+                "GLEAM": {
+                    "general": {
+                        "root_dir": "/data",
+                        "data_groupby": "Year",
+                        "data_type": "grid"
+                    },
+                    "sub_dir": "ET",
+                    "prefix": "gleam_",
+                    "suffix": "",
+                    "varname": "E",
+                    "syear": 2000,
+                    "eyear": 2020
+                }
+            }
+        }
+        general_config = {
+            "syear": 2000,
+            "eyear": 2020
+        }
+
+        report = validator.validate_all(sources, general_config)
+
+        assert report.total_count == 1
+        assert len(report.results) == 1
+        assert report.results[0].var_name == "Evapotranspiration"
+        assert report.results[0].source_name == "GLEAM"
+
+    def test_validate_all_multiple_sources(self):
+        """Test validate_all with multiple sources."""
+        validator = DataValidator(is_remote=False)
+
+        sources = {
+            "ET": {
+                "GLEAM": {
+                    "general": {"root_dir": "/data1", "data_groupby": "Year", "data_type": "grid"},
+                    "prefix": "gleam_", "suffix": "", "varname": "E"
+                },
+                "FLUXCOM": {
+                    "general": {"root_dir": "/data2", "data_groupby": "Year", "data_type": "grid"},
+                    "prefix": "flux_", "suffix": "", "varname": "ET"
+                }
+            },
+            "GPP": {
+                "MODIS": {
+                    "general": {"root_dir": "/data3", "data_groupby": "Single", "data_type": "grid"},
+                    "prefix": "modis_gpp", "suffix": "", "varname": "GPP"
+                }
+            }
+        }
+        general_config = {"syear": 2000, "eyear": 2020}
+
+        report = validator.validate_all(sources, general_config)
+
+        assert report.total_count == 3
+        var_names = [r.var_name for r in report.results]
+        assert "ET" in var_names
+        assert "GPP" in var_names
+
+    def test_validate_all_with_progress_callback(self):
+        """Test validate_all calls progress callback correctly."""
+        validator = DataValidator(is_remote=False)
+
+        progress_calls = []
+
+        def progress_callback(current, total, var_name, source_name):
+            progress_calls.append((current, total, var_name, source_name))
+
+        sources = {
+            "ET": {
+                "Source1": {
+                    "general": {"root_dir": "/d", "data_groupby": "Single", "data_type": "grid"},
+                    "prefix": "f", "suffix": "", "varname": "E"
+                }
+            },
+            "GPP": {
+                "Source2": {
+                    "general": {"root_dir": "/d", "data_groupby": "Single", "data_type": "grid"},
+                    "prefix": "g", "suffix": "", "varname": "G"
+                }
+            }
+        }
+
+        report = validator.validate_all(sources, {"syear": 2000, "eyear": 2020}, progress_callback)
+
+        # Should have progress calls for each source plus final call
+        assert len(progress_calls) >= 2
+        # First call should be (0, 2, var_name, source_name)
+        assert progress_calls[0][0] == 0
+        assert progress_calls[0][1] == 2
+        # Final call should indicate completion (total, total, "", "")
+        assert progress_calls[-1][0] == progress_calls[-1][1]
+
+    def test_validate_all_remote_mode(self):
+        """Test validate_all works in remote mode."""
+        mock_ssh = Mock()
+        mock_ssh.execute.return_value = ("", "", 1)  # Files don't exist
+
+        validator = DataValidator(is_remote=True, ssh_manager=mock_ssh)
+
+        sources = {
+            "ET": {
+                "GLEAM": {
+                    "general": {"root_dir": "/remote/data", "data_groupby": "Single", "data_type": "grid"},
+                    "prefix": "gleam", "suffix": "", "varname": "E"
+                }
+            }
+        }
+
+        report = validator.validate_all(sources, {"syear": 2000, "eyear": 2020})
+
+        assert report.total_count == 1
+        # SSH execute should have been called for file existence check
+        assert mock_ssh.execute.called

@@ -411,3 +411,143 @@ except Exception as e:
             "spatial_range", False,
             f"空间范围不足"
         )
+
+
+class DataValidator:
+    """Main validator that orchestrates validation checks."""
+
+    def __init__(self, is_remote: bool = False, ssh_manager=None):
+        """Initialize validator.
+
+        Args:
+            is_remote: If True, use remote validation via SSH
+            ssh_manager: SSHManager instance (required if is_remote=True)
+        """
+        self._is_remote = is_remote
+        self._ssh_manager = ssh_manager
+
+        if is_remote and ssh_manager:
+            self._validator = RemoteNetCDFValidator(ssh_manager)
+        else:
+            self._validator = LocalNetCDFValidator()
+
+    def validate_source(
+        self,
+        var_name: str,
+        source_name: str,
+        source_config: Dict[str, Any],
+        general_config: Dict[str, Any]
+    ) -> SourceValidationResult:
+        """Validate a single data source.
+
+        Args:
+            var_name: Variable name (e.g., "Evapotranspiration")
+            source_name: Source name (e.g., "GLEAM_v4.2a")
+            source_config: Source configuration dict
+            general_config: General settings (syear, eyear, lat/lon range)
+
+        Returns:
+            SourceValidationResult with all checks
+        """
+        checks = []
+
+        # Extract config values
+        general = source_config.get("general", source_config)
+        root_dir = general.get("root_dir") or general.get("dir", "")
+        sub_dir = source_config.get("sub_dir", "")
+        prefix = source_config.get("prefix", "")
+        suffix = source_config.get("suffix", "")
+        varname = source_config.get("varname", "")
+        data_groupby = general.get("data_groupby", "Year")
+        data_type = general.get("data_type", "grid")
+
+        # Use source-specific years if available, otherwise general config
+        syear = source_config.get("syear") or general.get("syear") or general_config.get("syear", 2000)
+        eyear = source_config.get("eyear") or general.get("eyear") or general_config.get("eyear", 2020)
+
+        # Generate file paths
+        path_gen = FilePathGenerator(
+            root_dir=root_dir,
+            sub_dir=sub_dir,
+            prefix=prefix,
+            suffix=suffix,
+            data_groupby=data_groupby,
+            syear=syear,
+            eyear=eyear
+        )
+        sample_paths = path_gen.get_sample_paths()
+
+        # Check file existence
+        first_existing_path = None
+        for path in sample_paths:
+            check = self._validator.check_file_exists(path)
+            checks.append(check)
+            if check.passed and first_existing_path is None:
+                first_existing_path = path
+
+        # If no files found, skip other checks
+        if first_existing_path is None:
+            return SourceValidationResult(var_name, source_name, checks)
+
+        # Check variable name
+        if varname:
+            check = self._validator.check_variable(first_existing_path, varname)
+            checks.append(check)
+
+        # Check time range (only for grid data)
+        if data_type == "grid":
+            check = self._validator.check_time_range(
+                first_existing_path,
+                int(syear), int(eyear)
+            )
+            checks.append(check)
+
+            # Check spatial range
+            min_lat = general_config.get("min_lat", -90)
+            max_lat = general_config.get("max_lat", 90)
+            min_lon = general_config.get("min_lon", -180)
+            max_lon = general_config.get("max_lon", 180)
+
+            check = self._validator.check_spatial_range(
+                first_existing_path,
+                min_lat, max_lat, min_lon, max_lon
+            )
+            checks.append(check)
+
+        return SourceValidationResult(var_name, source_name, checks)
+
+    def validate_all(
+        self,
+        sources: Dict[str, Dict[str, Dict]],
+        general_config: Dict[str, Any],
+        progress_callback=None
+    ) -> DataValidationReport:
+        """Validate all data sources.
+
+        Args:
+            sources: Dict of {var_name: {source_name: source_config}}
+            general_config: General settings
+            progress_callback: Optional callback(current, total, var_name, source_name)
+
+        Returns:
+            DataValidationReport with all results
+        """
+        results = []
+        total = sum(len(s) for s in sources.values())
+        current = 0
+
+        for var_name, var_sources in sources.items():
+            for source_name, source_config in var_sources.items():
+                if progress_callback:
+                    progress_callback(current, total, var_name, source_name)
+
+                result = self.validate_source(
+                    var_name, source_name, source_config, general_config
+                )
+                results.append(result)
+                current += 1
+
+        if progress_callback:
+            progress_callback(total, total, "", "")
+
+        return DataValidationReport(results=results)
