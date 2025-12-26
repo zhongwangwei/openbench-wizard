@@ -6,6 +6,8 @@ For simulation data, prefix/suffix are shared across all variables at the genera
 This is different from reference data where each variable has its own prefix/suffix.
 """
 
+import logging
+import shlex
 from typing import Dict, Any
 
 from PySide6.QtWidgets import (
@@ -15,7 +17,24 @@ from PySide6.QtWidgets import (
 
 from ui.pages.base_page import BasePage
 from ui.widgets import DataSourceEditor
-from core.path_utils import to_absolute_path, get_openbench_root, convert_paths_in_dict
+from core.path_utils import to_absolute_path, convert_paths_in_dict
+
+logger = logging.getLogger(__name__)
+
+
+def get_remote_ssh_manager(controller):
+    """Get SSH manager from the controller if in remote mode.
+
+    Args:
+        controller: The WizardController instance
+
+    Returns:
+        SSHManager instance if in remote mode and connected, None otherwise
+    """
+    general = controller.config.get("general", {})
+    if general.get("execution_mode") != "remote":
+        return None
+    return controller.ssh_manager
 
 
 class PageSimData(BasePage):
@@ -101,9 +120,11 @@ class PageSimData(BasePage):
 
     def _add_source(self, var_name: str):
         """Add new data source."""
+        ssh_manager = get_remote_ssh_manager(self.controller)
         dialog = DataSourceEditor(
             source_type="sim",
             var_name=var_name,  # Pass for context (shown in title)
+            ssh_manager=ssh_manager,
             parent=self
         )
         if dialog.exec():
@@ -137,10 +158,12 @@ class PageSimData(BasePage):
         copied_data.pop("def_nml_path", None)
 
         # Open dialog with copied data but no source name (user must enter new name)
+        ssh_manager = get_remote_ssh_manager(self.controller)
         dialog = DataSourceEditor(
             source_type="sim",
             var_name=var_name,
             initial_data=copied_data,
+            ssh_manager=ssh_manager,
             parent=self
         )
         if dialog.exec():
@@ -172,11 +195,13 @@ class PageSimData(BasePage):
         source_name = current.text()
         existing_data = self._source_configs.get(var_name, {}).get(source_name, {})
 
+        ssh_manager = get_remote_ssh_manager(self.controller)
         dialog = DataSourceEditor(
             source_name=source_name,
             source_type="sim",
             var_name=var_name,  # Pass for context (shown in title)
             initial_data=existing_data,
+            ssh_manager=ssh_manager,
             parent=self
         )
         if dialog.exec():
@@ -230,17 +255,22 @@ class PageSimData(BasePage):
         self._rebuild_variable_groups()
 
         sim_data = self.controller.config.get("sim_data", {})
-        general = sim_data.get("general", {})
+        general_section = sim_data.get("general", {})
         def_nml = sim_data.get("def_nml", {})
         # saved_source_configs now uses compound key: "var_name::source_name"
         saved_source_configs = sim_data.get("source_configs", {})
+
+        # Check if in remote mode
+        config_general = self.controller.config.get("general", {})
+        is_remote = config_general.get("execution_mode") == "remote"
+        ssh_manager = get_remote_ssh_manager(self.controller) if is_remote else None
 
         eval_items = self.controller.config.get("evaluation_items", {})
         selected = [k for k, v in eval_items.items() if v]
 
         for var_name in selected:
             key = f"{var_name}_sim_source"
-            sources = general.get(key, [])
+            sources = general_section.get(key, [])
             if isinstance(sources, str):
                 sources = [sources]
 
@@ -261,24 +291,102 @@ class PageSimData(BasePage):
 
                 # Try to load the actual def_nml file content
                 if def_nml_path:
-                    full_path = self._resolve_def_nml_path(def_nml_path)
+                    nml_content = None
 
-                    if full_path and os.path.exists(full_path):
-                        try:
-                            with open(full_path, 'r', encoding='utf-8') as f:
-                                nml_content = yaml.safe_load(f) or {}
+                    if is_remote:
+                        # In remote mode, only load from remote server
+                        if ssh_manager and ssh_manager.is_connected:
+                            remote_path = self._resolve_remote_def_nml_path(ssh_manager, def_nml_path)
+                            nml_content = self._load_remote_nml_content(ssh_manager, remote_path)
+                        # If not connected in remote mode, don't fall back to local - just skip loading
+                    else:
+                        # Local mode - load from local file
+                        full_path = self._resolve_def_nml_path(def_nml_path)
+                        if full_path and os.path.exists(full_path):
+                            try:
+                                with open(full_path, 'r', encoding='utf-8') as f:
+                                    nml_content = yaml.safe_load(f) or {}
+                            except Exception as e:
+                                print(f"Warning: Failed to load def_nml file {full_path}: {e}")
 
-                            # For sim data, store the general section
-                            # prefix/suffix are at general level
-                            if "general" in nml_content:
-                                source_data["general"] = nml_content["general"].copy()
-
-                        except Exception as e:
-                            print(f"Warning: Failed to load def_nml file {full_path}: {e}")
+                    if nml_content:
+                        # For sim data, store the general section
+                        # prefix/suffix are at general level
+                        if "general" in nml_content:
+                            source_data["general"] = nml_content["general"].copy()
 
                 self._source_configs[var_name][source_name] = source_data
 
             self._update_source_list(var_name)
+
+        # Save loaded configs back to controller to ensure they're available for export
+        if self._source_configs:
+            self.save_to_config()
+
+    def _load_remote_nml_content(self, ssh_manager, def_nml_path: str) -> dict:
+        """Load NML content from remote server."""
+        import yaml
+
+        if not def_nml_path:
+            return None
+
+        try:
+            stdout, stderr, exit_code = ssh_manager.execute(
+                f"cat '{def_nml_path}'", timeout=30
+            )
+            if exit_code == 0 and stdout.strip():
+                return yaml.safe_load(stdout) or {}
+            else:
+                print(f"Warning: Failed to read remote file {def_nml_path}: {stderr}")
+        except Exception as e:
+            print(f"Warning: Failed to load remote def_nml file {def_nml_path}: {e}")
+
+        return None
+
+    def _resolve_remote_def_nml_path(self, ssh_manager, def_nml_path: str) -> str:
+        """Resolve def_nml path on remote server."""
+        if not def_nml_path:
+            return ""
+
+        # If already absolute, return as-is
+        if def_nml_path.startswith('/'):
+            return def_nml_path
+
+        # Get project root from controller
+        project_root = self.controller.project_root or ""
+
+        # Handle relative paths
+        if def_nml_path.startswith('./'):
+            relative_path = def_nml_path[2:]
+        else:
+            relative_path = def_nml_path
+
+        # Try different base directories
+        paths_to_try = []
+        if project_root:
+            paths_to_try.append(f"{project_root}/{relative_path}")
+            # Also try output directory from config
+            basedir = self.controller.config.get("general", {}).get("basedir", "")
+            if basedir:
+                if basedir.startswith('/'):
+                    paths_to_try.append(f"{basedir.rstrip('/')}/{relative_path.lstrip('/')}")
+                else:
+                    paths_to_try.append(f"{project_root}/{basedir}/{relative_path}")
+
+        # Check which path exists on remote
+        for path in paths_to_try:
+            try:
+                quoted_path = shlex.quote(path)
+                stdout, stderr, exit_code = ssh_manager.execute(
+                    f"test -f {quoted_path} && echo 'exists'", timeout=10
+                )
+                if exit_code == 0 and 'exists' in stdout:
+                    return path
+            except Exception as e:
+                logger.debug("Failed to check remote path %s: %s", path, e)
+
+        # Return the first attempt if nothing found
+        return paths_to_try[0] if paths_to_try else def_nml_path
 
     def _resolve_def_nml_path(self, def_nml_path: str) -> str:
         """Resolve def_nml path to YAML file."""
@@ -303,13 +411,6 @@ class PageSimData(BasePage):
             return yaml_path
 
         return full_path  # Return even if doesn't exist, let validation catch it
-
-    def _get_openbench_root(self) -> str:
-        """Get the OpenBench root directory."""
-        # Use controller's project_root if available
-        if self.controller.project_root:
-            return self.controller.project_root
-        return get_openbench_root()
 
     def save_to_config(self):
         """Save to config.
@@ -350,3 +451,84 @@ class PageSimData(BasePage):
 
         # Trigger namelist sync
         self.controller.sync_namelists()
+
+    def validate(self) -> bool:
+        """Validate page input - ensure all evaluation items have data sources."""
+        from core.validation import ValidationError, ValidationManager
+
+        eval_items = self.controller.config.get("evaluation_items", {})
+        selected = [k for k, v in eval_items.items() if v]
+
+        manager = ValidationManager(self)
+
+        for var_name in selected:
+            sources = self._source_configs.get(var_name, {})
+            if not sources:
+                error = ValidationError(
+                    field_name="data_source",
+                    message=f"{var_name.replace('_', ' ')} 缺少模拟数据源配置",
+                    page_id=self.PAGE_ID,
+                    context={"var_name": var_name}
+                )
+                manager.show_error_and_focus(error)
+                # Auto-open add source dialog
+                self._add_source(var_name)
+                return False
+
+            # Validate each source has required fields
+            for source_name, source_data in sources.items():
+                # Check varname
+                varname = source_data.get("varname", "")
+                if not varname:
+                    error = ValidationError(
+                        field_name="varname",
+                        message=f"变量名不能为空\n\n数据源: {source_name}\n变量: {var_name.replace('_', ' ')}",
+                        page_id=self.PAGE_ID,
+                        context={"var_name": var_name, "source_name": source_name}
+                    )
+                    manager.show_error_and_focus(error)
+                    self._select_and_edit_source(var_name, source_name)
+                    return False
+
+                # Check prefix/suffix
+                prefix = source_data.get("prefix", "")
+                suffix = source_data.get("suffix", "")
+                if not prefix and not suffix:
+                    error = ValidationError(
+                        field_name="prefix/suffix",
+                        message=f"文件前缀和后缀至少填写一个\n\n数据源: {source_name}\n变量: {var_name.replace('_', ' ')}",
+                        page_id=self.PAGE_ID,
+                        context={"var_name": var_name, "source_name": source_name}
+                    )
+                    manager.show_error_and_focus(error)
+                    self._select_and_edit_source(var_name, source_name)
+                    return False
+
+                # Check root_dir
+                general = source_data.get("general", {})
+                root_dir = general.get("root_dir", "") or general.get("dir", "")
+                if not root_dir:
+                    error = ValidationError(
+                        field_name="root_dir",
+                        message=f"根目录不能为空\n\n数据源: {source_name}\n变量: {var_name.replace('_', ' ')}",
+                        page_id=self.PAGE_ID,
+                        context={"var_name": var_name, "source_name": source_name}
+                    )
+                    manager.show_error_and_focus(error)
+                    self._select_and_edit_source(var_name, source_name)
+                    return False
+
+        self.save_to_config()
+        return True
+
+    def _select_and_edit_source(self, var_name: str, source_name: str):
+        """Select source in list and open edit dialog."""
+        source_list = self._source_lists.get(var_name)
+        if source_list:
+            # Find and select the item
+            for i in range(source_list.count()):
+                if source_list.item(i).text() == source_name:
+                    source_list.setCurrentRow(i)
+                    break
+            # Open edit dialog
+            self._edit_source(var_name)
