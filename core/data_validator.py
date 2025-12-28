@@ -83,8 +83,11 @@ class FilePathGenerator:
     def _build_path(self, filename: str) -> str:
         """Build full path with root_dir and sub_dir."""
         if self.sub_dir:
-            return os.path.join(self.root_dir, self.sub_dir, filename)
-        return os.path.join(self.root_dir, filename)
+            path = os.path.join(self.root_dir, self.sub_dir, filename)
+        else:
+            path = os.path.join(self.root_dir, filename)
+        # Convert to absolute path
+        return os.path.abspath(path)
 
     def get_sample_paths(self) -> List[str]:
         """Get sample file paths for validation.
