@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
+from core.path_utils import to_absolute_path, get_openbench_root
+
 
 @dataclass
 class ValidationCheck:
@@ -86,8 +88,8 @@ class FilePathGenerator:
             path = os.path.join(self.root_dir, self.sub_dir, filename)
         else:
             path = os.path.join(self.root_dir, filename)
-        # Convert to absolute path
-        return os.path.abspath(path)
+        # Convert to absolute path using OpenBench root as base
+        return to_absolute_path(path, get_openbench_root())
 
     def get_sample_paths(self) -> List[str]:
         """Get sample file paths for validation.
