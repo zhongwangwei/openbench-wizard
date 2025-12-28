@@ -7,8 +7,11 @@ import os
 block_cipher = None
 
 # Get PySide6 path for platform-specific plugin collection
-import PySide6
-pyside6_dir = os.path.dirname(PySide6.__file__)
+try:
+    import PySide6
+    pyside6_dir = os.path.dirname(PySide6.__file__)
+except ImportError:
+    raise ImportError("PySide6 is required. Install it with: pip install PySide6")
 
 # Collect only essential Qt plugins (platform + styles)
 binaries = []
