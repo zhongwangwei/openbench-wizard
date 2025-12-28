@@ -453,11 +453,14 @@ class DataValidator:
 
         # Extract config values
         general = source_config.get("general", source_config)
+        var_config = source_config.get("var_config", source_config)
+
         root_dir = general.get("root_dir") or general.get("dir", "")
-        sub_dir = source_config.get("sub_dir", "")
-        prefix = source_config.get("prefix", "")
-        suffix = source_config.get("suffix", "")
-        varname = source_config.get("varname", "")
+        # sub_dir, prefix, suffix, varname can be in var_config or top level
+        sub_dir = var_config.get("sub_dir") or source_config.get("sub_dir", "")
+        prefix = var_config.get("prefix") or source_config.get("prefix", "")
+        suffix = var_config.get("suffix") or source_config.get("suffix", "")
+        varname = var_config.get("varname") or source_config.get("varname", "")
         data_groupby = general.get("data_groupby", "Year")
         data_type = general.get("data_type", "grid")
 
