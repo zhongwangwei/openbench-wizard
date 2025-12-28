@@ -481,6 +481,11 @@ class DataValidator:
         syear = source_config.get("syear") or general.get("syear") or general_config.get("syear", 2000)
         eyear = source_config.get("eyear") or general.get("eyear") or general_config.get("eyear", 2020)
 
+        # For station data without prefix/suffix, skip file path validation
+        # Station data files may not follow the standard naming pattern
+        if data_type == "stn" and not prefix and not suffix:
+            return SourceValidationResult(var_name, source_name, checks)
+
         # Generate file paths
         path_gen = FilePathGenerator(
             root_dir=root_dir,
