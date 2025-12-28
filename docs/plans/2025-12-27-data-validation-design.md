@@ -1,224 +1,154 @@
-# Deep Data Validation Design
+# Data Validation Design
 
-## Overview
+## Purpose
 
-Add a "Validate Data" button to Reference Data and Simulation Data pages that performs deep validation of configured data sources, checking file existence, variable names, time range, and spatial range in NetCDF files.
+Design document for the data validation feature in OpenBench Wizard. This feature validates NetCDF data files to ensure they meet the requirements for evaluation.
 
-## Features
+## Requirements
 
-### Validation Checks
+### Functional Requirements
 
-1. **File Existence** - Generate file paths based on root_dir, prefix/suffix, and data_groupby, verify files exist
-2. **Variable Name** - Open NetCDF file and verify configured varname exists
-3. **Time Range** - Check if data time dimension covers configured syear-eyear
-4. **Spatial Range** - Check if data lat/lon covers configured min/max_lat/lon
+1. **File Existence Check**: Verify that data files exist at specified paths
+2. **Variable Check**: Verify that required variables exist in files
+3. **Time Range Check**: Verify that data covers required time period
+4. **Spatial Range Check**: Verify that data covers required spatial extent
 
-### User Interaction Flow
+### Non-Functional Requirements
 
-```
-User clicks "验证数据" button
-       │
-       ▼
-  Show progress dialog (progress bar + current item)
-       │
-       ▼
-  Check each data source...
-       │
-       ▼
-  Show results dialog
-  ┌─────────────────────────────────┐
-  │ 数据验证结果                      │
-  ├─────────────────────────────────┤
-  │ ✓ Evapotranspiration/GLEAM     │
-  │ ✗ Latent_Heat/FLUXCOM          │
-  │   - 变量 'LE' 不存在            │
-  │   - 时间范围不足 (2005-2018)    │
-  │ ✓ GPP/MODIS                    │
-  └─────────────────────────────────┘
-```
+1. **Performance**: Validation should complete within seconds for typical datasets
+2. **Usability**: Clear, actionable error messages
+3. **Extensibility**: Easy to add new validation checks
 
-## Architecture
+## Design Decisions
 
-### Core Components
+### Decision 1: Local vs Remote Validation
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    DataValidator                         │
-│  - validate_source(source_config) -> ValidationReport   │
-│  - validate_all(sources) -> List[ValidationReport]      │
-└─────────────────────────────────────────────────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          ▼               ▼               ▼
-   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-   │FileChecker  │ │VarChecker   │ │RangeChecker │
-   │Check file   │ │Check varname│ │Check ranges │
-   │existence    │ │in NetCDF    │ │time & space │
-   └─────────────┘ └─────────────┘ └─────────────┘
-```
+**Options:**
+- A) Local-only validation (require data to be locally accessible)
+- B) Remote validation via SSH
+- C) Support both local and remote
 
-### Local vs Remote Mode
+**Chosen: C** - Support both for maximum flexibility
 
-| Mode | File Check | NetCDF Read |
-|------|------------|-------------|
-| Local | `os.path.exists()` | `xarray.open_dataset()` |
-| Remote | SSH `test -f` | SSH execute Python script |
+### Decision 2: Validation Library
 
-### Remote Validation Strategy
+**Options:**
+- A) Use xarray for all NetCDF operations
+- B) Use netCDF4 directly
+- C) Use xarray with netCDF4 backend
 
-In remote mode, send validation script to server:
+**Chosen: C** - xarray provides cleaner API while netCDF4 handles low-level operations
 
-```python
-# Execute on remote server
-import xarray as xr
-import json
+### Decision 3: Error Reporting
 
-ds = xr.open_dataset('/path/to/file.nc')
-result = {
-    'exists': True,
-    'variables': list(ds.data_vars),
-    'time_range': [str(ds.time.min().values), str(ds.time.max().values)],
-    'lat_range': [float(ds.lat.min()), float(ds.lat.max())],
-    'lon_range': [float(ds.lon.min()), float(ds.lon.max())]
-}
-print(json.dumps(result))
-```
+**Options:**
+- A) First error stops validation
+- B) Collect all errors before reporting
 
-## File Path Generation
+**Chosen: B** - Users see complete picture of all issues at once
 
-Based on `data_groupby` setting:
-
-| data_groupby | File Path Pattern | Example |
-|--------------|-------------------|---------|
-| Single | `{root_dir}/{sub_dir}/{prefix}{suffix}.nc` | `data/ET/gleam_v4.nc` |
-| Year | `{root_dir}/{sub_dir}/{prefix}{year}{suffix}.nc` | `data/ET/gleam_2000.nc` |
-| Month | `{root_dir}/{sub_dir}/{prefix}{year}{month:02d}{suffix}.nc` | `data/ET/gleam_200001.nc` |
-| Day | `{root_dir}/{sub_dir}/{prefix}{year}{month:02d}{day:02d}{suffix}.nc` | `data/ET/gleam_20000101.nc` |
-
-### File Check Strategy
-
-- **Single**: Check single file
-- **Year/Month/Day**: Sample check (first year, last year, middle year) to avoid checking too many files
-
-## Validation Rules
-
-| Check | Content | Error Message Example |
-|-------|---------|----------------------|
-| File exists | Check if generated file path exists | "文件不存在: /data/ET/gleam_2000.nc" |
-| Variable name | Check if varname exists in NetCDF variables | "变量 'LE' 不存在，可用变量: ['E', 'Ep', 'Ei']" |
-| Time range | Check if data time covers syear-eyear | "时间范围不足: 数据 2005-2018，需要 2000-2020" |
-| Spatial range | Check if data lat/lon covers configured area | "空间范围不足: 数据纬度 -60~60，需要 -90~90" |
-
-### Dimension Name Handling
-
-NetCDF files may use different dimension names:
-
-```python
-# Common time dimension names
-TIME_DIMS = ['time', 'Time', 'TIME', 't', 'date']
-# Common latitude dimension names
-LAT_DIMS = ['lat', 'latitude', 'Lat', 'LAT', 'y']
-# Common longitude dimension names
-LON_DIMS = ['lon', 'longitude', 'Lon', 'LON', 'x']
-```
-
-Validator will automatically try to match these common names.
-
-## UI Components
-
-### Validate Button
-
-Add button at bottom of PageRefData and PageSimData:
+## Class Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Reference Data                                          │
-├─────────────────────────────────────────────────────────┤
-│  [Evapotranspiration]  [+ Add] [Copy] [Edit] [Remove]   │
-│  ├─ GLEAM_v4.2a                                         │
-│  └─ FLUXCOM                                             │
-│                                                          │
-│  [Latent_Heat]         [+ Add] [Copy] [Edit] [Remove]   │
-│  └─ FLUXNET                                             │
-│                                                          │
-├─────────────────────────────────────────────────────────┤
-│                              [ 验证数据 ]                │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────┐
+│         ValidationCheck             │
+├─────────────────────────────────────┤
+│ + name: str                         │
+│ + passed: bool                      │
+│ + message: str                      │
+├─────────────────────────────────────┤
+│                                     │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│      SourceValidationResult         │
+├─────────────────────────────────────┤
+│ + var_name: str                     │
+│ + source_name: str                  │
+│ + checks: List[ValidationCheck]     │
+├─────────────────────────────────────┤
+│ + is_valid: bool (property)         │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│       DataValidationReport          │
+├─────────────────────────────────────┤
+│ + results: List[SourceValidationResult]  │
+│ + timestamp: datetime               │
+├─────────────────────────────────────┤
+│ + all_valid: bool (property)        │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│       LocalNetCDFValidator          │
+├─────────────────────────────────────┤
+│ + TIME_DIMS: List[str]              │
+│ + LAT_DIMS: List[str]               │
+│ + LON_DIMS: List[str]               │
+├─────────────────────────────────────┤
+│ + check_file_exists()               │
+│ + check_variable()                  │
+│ + check_time_range()                │
+│ + check_spatial_range()             │
+└─────────────────────────────────────┘
+
+┌─────────────────────────────────────┐
+│      RemoteNetCDFValidator          │
+├─────────────────────────────────────┤
+│ - host: str                         │
+│ - username: str                     │
+│ - _ssh_client: SSHClient            │
+├─────────────────────────────────────┤
+│ + check_file_exists()               │
+│ + check_variable()                  │
+│ + check_time_range()                │
+│ + check_spatial_range()             │
+│ - _run_remote_script()              │
+└─────────────────────────────────────┘
 ```
 
-### Progress Dialog
+## Validation Flow
 
 ```
-┌─────────────────────────────────────────┐
-│  正在验证数据...                         │
-├─────────────────────────────────────────┤
-│                                          │
-│  [████████░░░░░░░░░░░░]  3/8             │
-│                                          │
-│  当前: Evapotranspiration / GLEAM_v4.2a │
-│  检查: 变量名验证                        │
-│                                          │
-│                          [ 取消 ]        │
-└─────────────────────────────────────────┘
+User configures data source
+         │
+         ▼
+Click "Validate" button
+         │
+         ▼
+Determine if local or remote
+         │
+    ┌────┴────┐
+    │         │
+    ▼         ▼
+  Local    Remote
+Validator  Validator
+    │         │
+    └────┬────┘
+         │
+         ▼
+Run all checks:
+  1. file_exists
+  2. variable_exists
+  3. time_range
+  4. spatial_range
+         │
+         ▼
+Generate ValidationResult
+         │
+         ▼
+Display results in UI
 ```
 
-### Results Dialog
+## UI Integration Points
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  数据验证结果                                  [ × ]     │
-├─────────────────────────────────────────────────────────┤
-│  验证完成: 6 通过, 2 失败                               │
-├─────────────────────────────────────────────────────────┤
-│  ✓ Evapotranspiration / GLEAM_v4.2a                     │
-│  ✓ Evapotranspiration / FLUXCOM                         │
-│  ✗ Latent_Heat / FLUXNET                                │
-│    └─ 变量 'LE' 不存在，可用变量: ['H', 'Rn', 'G']      │
-│  ✓ GPP / MODIS                                          │
-│  ✗ GPP / FLUXNET                                        │
-│    └─ 时间范围不足: 数据 2005-2018, 需要 2000-2020      │
-│    └─ 文件不存在: /data/gpp/flux_2019.nc               │
-│  ✓ ...                                                  │
-├─────────────────────────────────────────────────────────┤
-│                                      [ 确定 ] [ 导出 ]  │
-└─────────────────────────────────────────────────────────┘
-```
+1. **DataSourceEditor**: Add "Validate" button
+2. **Validation Results Panel**: Show pass/fail for each check
+3. **Preview Page**: Summary validation status
 
-- **Export button**: Export validation results to text file
+## Error Message Guidelines
 
-## Error Handling
-
-| Scenario | Handling |
-|----------|----------|
-| xarray not installed | Prompt "需要安装 xarray: pip install xarray netCDF4" |
-| File cannot be opened | Record error "文件损坏或格式不支持: {path}" |
-| SSH connection failed | Prompt "远程连接失败，请检查 SSH 配置" |
-| Remote xarray not installed | Prompt "远程服务器需要安装 xarray" |
-| Validation timeout | Single file check timeout 30s, skip and record |
-| User cancel | Stop validation, show completed results |
-
-## Dependencies
-
-```
-# Local validation requires
-xarray
-netCDF4  # or h5netcdf
-
-# Remote validation requires (on remote server)
-xarray
-netCDF4
-```
-
-## Files to Create/Modify
-
-| File | Changes |
-|------|---------|
-| `core/data_validator.py` | New - Data validation core logic |
-| `ui/widgets/validation_dialog.py` | New - Progress and results dialogs |
-| `ui/pages/page_ref_data.py` | Add validate button and handler |
-| `ui/pages/page_sim_data.py` | Add validate button and handler |
-
----
-
-*Document Version: 1.0*
-*Created: 2025-12-27*
+- Keep messages concise but informative
+- Include actual vs expected values for failures
+- Use consistent formatting
+- All messages in English

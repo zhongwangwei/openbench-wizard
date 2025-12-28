@@ -16,11 +16,11 @@ class TestValidationError:
         """Test creating a validation error."""
         error = ValidationError(
             field_name="project_name",
-            message="项目名称不能为空",
+            message="Project name cannot be empty",
             page_id="general",
         )
         assert error.field_name == "project_name"
-        assert error.message == "项目名称不能为空"
+        assert error.message == "Project name cannot be empty"
         assert error.page_id == "general"
         assert error.widget is None
         assert error.context == {}
@@ -29,7 +29,7 @@ class TestValidationError:
         """Test validation error with context."""
         error = ValidationError(
             field_name="varname",
-            message="变量名不能为空",
+            message="Variable name cannot be empty",
             page_id="ref_data",
             context={"var_name": "Evapotranspiration", "source_name": "GLEAM"}
         )
@@ -63,24 +63,24 @@ class TestFieldValidator:
 
     def test_required_with_empty_string(self):
         """Test required validation fails for empty string."""
-        error = FieldValidator.required("", "project_name", "项目名称不能为空")
+        error = FieldValidator.required("", "project_name", "Project name cannot be empty")
         assert error is not None
         assert error.field_name == "project_name"
-        assert error.message == "项目名称不能为空"
+        assert error.message == "Project name cannot be empty"
 
     def test_required_with_whitespace_only(self):
         """Test required validation fails for whitespace only."""
-        error = FieldValidator.required("   ", "project_name", "项目名称不能为空")
+        error = FieldValidator.required("   ", "project_name", "Project name cannot be empty")
         assert error is not None
 
     def test_required_with_valid_value(self):
         """Test required validation passes for valid value."""
-        error = FieldValidator.required("my_project", "project_name", "项目名称不能为空")
+        error = FieldValidator.required("my_project", "project_name", "Project name cannot be empty")
         assert error is None
 
     def test_required_with_none(self):
         """Test required validation fails for None."""
-        error = FieldValidator.required(None, "project_name", "项目名称不能为空")
+        error = FieldValidator.required(None, "project_name", "Project name cannot be empty")
         assert error is not None
 
 
@@ -90,7 +90,7 @@ class TestFieldValidatorPathExists:
     def test_path_exists_with_valid_directory(self):
         """Test path exists passes for valid directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            error = FieldValidator.path_exists(tmpdir, "root_dir", "目录不存在")
+            error = FieldValidator.path_exists(tmpdir, "root_dir", "Directory does not exist")
             assert error is None
 
     def test_path_exists_with_invalid_path(self):
@@ -98,21 +98,21 @@ class TestFieldValidatorPathExists:
         error = FieldValidator.path_exists(
             "/non/existent/path/12345",
             "root_dir",
-            "目录不存在"
+            "Directory does not exist"
         )
         assert error is not None
-        assert "目录不存在" in error.message
+        assert "Directory does not exist" in error.message
 
     def test_path_exists_with_empty_path(self):
         """Test path exists passes for empty path (optional field)."""
-        error = FieldValidator.path_exists("", "root_dir", "目录不存在")
+        error = FieldValidator.path_exists("", "root_dir", "Directory does not exist")
         assert error is None
 
     def test_path_exists_with_file(self):
         """Test path exists passes for valid file."""
         with tempfile.NamedTemporaryFile(delete=False) as f:
             try:
-                error = FieldValidator.path_exists(f.name, "file_path", "文件不存在")
+                error = FieldValidator.path_exists(f.name, "file_path", "File does not exist")
                 assert error is None
             finally:
                 os.unlink(f.name)
@@ -123,28 +123,28 @@ class TestFieldValidatorNumberRange:
 
     def test_number_in_range(self):
         """Test number in valid range."""
-        error = FieldValidator.number_range(45.0, -90.0, 90.0, "latitude", "纬度范围无效")
+        error = FieldValidator.number_range(45.0, -90.0, 90.0, "latitude", "Invalid latitude range")
         assert error is None
 
     def test_number_at_min_boundary(self):
         """Test number at minimum boundary."""
-        error = FieldValidator.number_range(-90.0, -90.0, 90.0, "latitude", "纬度范围无效")
+        error = FieldValidator.number_range(-90.0, -90.0, 90.0, "latitude", "Invalid latitude range")
         assert error is None
 
     def test_number_at_max_boundary(self):
         """Test number at maximum boundary."""
-        error = FieldValidator.number_range(90.0, -90.0, 90.0, "latitude", "纬度范围无效")
+        error = FieldValidator.number_range(90.0, -90.0, 90.0, "latitude", "Invalid latitude range")
         assert error is None
 
     def test_number_below_min(self):
         """Test number below minimum fails."""
-        error = FieldValidator.number_range(-100.0, -90.0, 90.0, "latitude", "纬度范围无效（-90 到 90）")
+        error = FieldValidator.number_range(-100.0, -90.0, 90.0, "latitude", "Invalid latitude range (-90 to 90)")
         assert error is not None
-        assert "纬度范围无效" in error.message
+        assert "Invalid latitude range" in error.message
 
     def test_number_above_max(self):
         """Test number above maximum fails."""
-        error = FieldValidator.number_range(100.0, -90.0, 90.0, "latitude", "纬度范围无效（-90 到 90）")
+        error = FieldValidator.number_range(100.0, -90.0, 90.0, "latitude", "Invalid latitude range (-90 to 90)")
         assert error is not None
 
 
@@ -153,26 +153,26 @@ class TestFieldValidatorComparison:
 
     def test_min_max_valid(self):
         """Test min <= max passes."""
-        error = FieldValidator.min_max(2000, 2020, "year", "起始年份不能大于结束年份")
+        error = FieldValidator.min_max(2000, 2020, "year", "Start year cannot be greater than end year")
         assert error is None
 
     def test_min_max_equal(self):
         """Test min == max passes."""
-        error = FieldValidator.min_max(2010, 2010, "year", "起始年份不能大于结束年份")
+        error = FieldValidator.min_max(2010, 2010, "year", "Start year cannot be greater than end year")
         assert error is None
 
     def test_min_max_invalid(self):
         """Test min > max fails."""
-        error = FieldValidator.min_max(2020, 2000, "year", "起始年份不能大于结束年份")
+        error = FieldValidator.min_max(2020, 2000, "year", "Start year cannot be greater than end year")
         assert error is not None
-        assert "起始年份不能大于结束年份" in error.message
+        assert "Start year cannot be greater than end year" in error.message
 
     def test_min_max_with_floats(self):
         """Test min/max with float values."""
-        error = FieldValidator.min_max(-90.0, 90.0, "latitude", "最小值不能大于最大值")
+        error = FieldValidator.min_max(-90.0, 90.0, "latitude", "Min value cannot be greater than max value")
         assert error is None
 
-        error = FieldValidator.min_max(90.0, -90.0, "latitude", "最小值不能大于最大值")
+        error = FieldValidator.min_max(90.0, -90.0, "latitude", "Min value cannot be greater than max value")
         assert error is not None
 
 
@@ -184,7 +184,7 @@ class TestFieldValidatorAtLeastOne:
         error = FieldValidator.at_least_one(
             ["prefix_value", ""],
             ["prefix", "suffix"],
-            "文件前缀和后缀至少填写一个"
+            "File prefix and suffix must have at least one"
         )
         assert error is None
 
@@ -193,7 +193,7 @@ class TestFieldValidatorAtLeastOne:
         error = FieldValidator.at_least_one(
             ["prefix_value", "suffix_value"],
             ["prefix", "suffix"],
-            "文件前缀和后缀至少填写一个"
+            "File prefix and suffix must have at least one"
         )
         assert error is None
 
@@ -202,17 +202,17 @@ class TestFieldValidatorAtLeastOne:
         error = FieldValidator.at_least_one(
             ["", ""],
             ["prefix", "suffix"],
-            "文件前缀和后缀至少填写一个"
+            "File prefix and suffix must have at least one"
         )
         assert error is not None
-        assert "至少填写一个" in error.message
+        assert "at least one" in error.message.lower()
 
     def test_at_least_one_all_whitespace(self):
         """Test fails when all values are whitespace."""
         error = FieldValidator.at_least_one(
             ["  ", "   "],
             ["prefix", "suffix"],
-            "文件前缀和后缀至少填写一个"
+            "File prefix and suffix must have at least one"
         )
         assert error is not None
 
@@ -223,19 +223,19 @@ class TestFieldValidatorSelectionRequired:
     def test_selection_with_items(self):
         """Test passes when items are selected."""
         selection = {"item1": True, "item2": False, "item3": True}
-        error = FieldValidator.selection_required(selection, "evaluation", "请至少选择一个评估项目")
+        error = FieldValidator.selection_required(selection, "evaluation", "Please select at least one evaluation item")
         assert error is None
 
     def test_selection_all_false(self):
         """Test fails when no items selected."""
         selection = {"item1": False, "item2": False}
-        error = FieldValidator.selection_required(selection, "evaluation", "请至少选择一个评估项目")
+        error = FieldValidator.selection_required(selection, "evaluation", "Please select at least one evaluation item")
         assert error is not None
-        assert "至少选择一个" in error.message
+        assert "at least one" in error.message.lower()
 
     def test_selection_empty_dict(self):
         """Test fails for empty dict."""
-        error = FieldValidator.selection_required({}, "evaluation", "请至少选择一个评估项目")
+        error = FieldValidator.selection_required({}, "evaluation", "Please select at least one evaluation item")
         assert error is not None
 
     def test_combined_selection(self):
@@ -243,7 +243,7 @@ class TestFieldValidatorSelectionRequired:
         metrics = {"rmse": False}
         scores = {"overall": True}
         combined = {**metrics, **scores}
-        error = FieldValidator.selection_required(combined, "metrics_scores", "请至少选择一个指标或评分项")
+        error = FieldValidator.selection_required(combined, "metrics_scores", "Please select at least one metric or score item")
         assert error is None
 
 

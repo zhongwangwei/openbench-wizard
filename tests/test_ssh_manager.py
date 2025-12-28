@@ -4,7 +4,12 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from core.ssh_manager import SSHManager, SSHConnectionError
+from core.ssh_manager import (
+    SSHManager,
+    SSHConnectionError,
+    HostKeyVerificationError,
+    InteractiveHostKeyPolicy
+)
 
 
 class TestSSHManagerConnection:
@@ -95,22 +100,49 @@ class TestSSHManagerExecution:
         assert stderr == ""
         assert exit_code == 0
 
+    @patch('select.select')
     @patch('core.ssh_manager.paramiko.SSHClient')
-    def test_execute_stream(self, mock_ssh_class):
+    def test_execute_stream(self, mock_ssh_class, mock_select):
         """Test streaming command output."""
         mock_client = MagicMock()
         mock_ssh_class.return_value = mock_client
 
-        # Mock channel for streaming
+        # Mock channel for streaming with stateful behavior
         mock_channel = MagicMock()
-        mock_channel.recv_ready.side_effect = [True, True, False]
-        mock_channel.recv.side_effect = [b"line1\n", b"line2\n"]
-        mock_channel.exit_status_ready.side_effect = [False, False, True]
+
+        # Track state: how many times recv has been called
+        recv_call_count = [0]
+        data_to_return = [b"line1\n", b"line2\n"]
+
+        def recv_ready_side_effect():
+            # Return True if we still have data to return
+            return recv_call_count[0] < len(data_to_return)
+
+        def recv_side_effect(bufsize):
+            if recv_call_count[0] < len(data_to_return):
+                data = data_to_return[recv_call_count[0]]
+                recv_call_count[0] += 1
+                return data
+            return b""
+
+        exit_status_call_count = [0]
+        def exit_status_ready_side_effect():
+            # Return True after all data has been consumed
+            exit_status_call_count[0] += 1
+            return recv_call_count[0] >= len(data_to_return)
+
+        mock_channel.recv_ready.side_effect = recv_ready_side_effect
+        mock_channel.recv.side_effect = recv_side_effect
+        mock_channel.recv_stderr_ready.return_value = False
+        mock_channel.exit_status_ready.side_effect = exit_status_ready_side_effect
         mock_channel.recv_exit_status.return_value = 0
 
         mock_transport = MagicMock()
         mock_transport.open_session.return_value = mock_channel
         mock_client.get_transport.return_value = mock_transport
+
+        # Mock select to always return readable (actual check happens in recv_ready)
+        mock_select.return_value = ([mock_channel], [], [])
 
         manager = SSHManager()
         manager.connect("user@host", password="secret")
@@ -164,6 +196,7 @@ class TestSSHManagerEnvironment:
         mock_ssh_class.return_value = mock_client
 
         # Mock command responses
+        # Note: paths are now shell-quoted with shlex.quote() so we check for path substrings
         def exec_side_effect(cmd, timeout=None):
             mock_stdin = MagicMock()
             mock_stdout = MagicMock()
@@ -177,8 +210,11 @@ class TestSSHManagerEnvironment:
                 mock_stdout.read.return_value = b"/usr/bin/python3\n"
             elif "which python" in cmd and "python3" not in cmd:
                 mock_stdout.read.return_value = b"/usr/bin/python\n"
-            elif "miniforge3" in cmd:
+            elif "miniforge3" in cmd or "miniconda" in cmd or "anaconda" in cmd:
                 mock_stdout.read.return_value = b"/home/user/miniforge3/bin/python\n"
+            elif ".local/bin/python3" in cmd:
+                # Handle quoted path check: test -x '/home/user/.local/bin/python3'
+                mock_stdout.read.return_value = b"'/home/user/.local/bin/python3'\n"
             else:
                 mock_stdout.read.return_value = b""
                 mock_stdout.channel.recv_exit_status.return_value = 1
@@ -200,8 +236,8 @@ class TestSSHManagerEnvironment:
         mock_ssh_class.return_value = mock_client
 
         # Mock to return different pythons for different commands
-        call_count = [0]
-
+        # Note: paths are now shell-quoted with shlex.quote()
+        # Order matters: more specific patterns must come before general patterns
         def exec_side_effect(cmd, timeout=None):
             mock_stdin = MagicMock()
             mock_stdout = MagicMock()
@@ -211,11 +247,25 @@ class TestSSHManagerEnvironment:
             if "echo $HOME" in cmd:
                 mock_stdout.read.return_value = b"/home/user\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "which python3" in cmd:
-                mock_stdout.read.return_value = b"/usr/bin/python3\n"
+            elif "bash -i -l -c" in cmd and "which python3" in cmd:
+                # Interactive shell which python3 - returns user's conda python (not system)
+                mock_stdout.read.return_value = b"/home/user/miniforge3/bin/python3\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "which python" in cmd and "python3" not in cmd:
-                mock_stdout.read.return_value = b"/usr/bin/python\n"
+            elif "bash -i -l -c" in cmd and "which python" in cmd:
+                # Interactive shell which python - returns user's conda python (not system)
+                mock_stdout.read.return_value = b"/home/user/miniforge3/bin/python\n"
+                mock_stdout.channel.recv_exit_status.return_value = 0
+            elif "ls -d" in cmd and ("miniforge" in cmd or "miniconda" in cmd or "anaconda" in cmd):
+                # ls -d for finding conda pythons
+                mock_stdout.read.return_value = b"/home/user/miniforge3/bin/python\n"
+                mock_stdout.channel.recv_exit_status.return_value = 0
+            elif "ls " in cmd and ("miniforge" in cmd or "miniconda" in cmd):
+                # ls for finding conda pythons (Method 1b)
+                mock_stdout.read.return_value = b"/home/user/miniforge3/bin/python\n"
+                mock_stdout.channel.recv_exit_status.return_value = 0
+            elif ".local/bin/python3" in cmd:
+                # Handle quoted path check for .local (echo outputs without quotes)
+                mock_stdout.read.return_value = b"/home/user/.local/bin/python3\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
             else:
                 mock_stdout.read.return_value = b""
@@ -229,10 +279,10 @@ class TestSSHManagerEnvironment:
         manager.connect("user@host", password="secret")
         pythons = manager.detect_python_interpreters()
 
-        # Should find at least python3 and python
+        # Should find multiple interpreters (code excludes system paths like /usr/bin)
         assert len(pythons) >= 2
-        assert "/usr/bin/python3" in pythons
-        assert "/usr/bin/python" in pythons
+        assert "/home/user/miniforge3/bin/python" in pythons
+        assert "/home/user/.local/bin/python3" in pythons
 
     @patch('core.ssh_manager.paramiko.SSHClient')
     def test_detect_conda_envs(self, mock_ssh_class):
@@ -249,10 +299,12 @@ class TestSSHManagerEnvironment:
             if "echo $HOME" in cmd:
                 mock_stdout.read.return_value = b"/home/user\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "test -f /home/user/miniforge3/bin/conda" in cmd:
-                mock_stdout.read.return_value = b"exists\n"
+            elif "ls -d" in cmd and "bin/conda" in cmd:
+                # First method: wildcard ls to find conda
+                mock_stdout.read.return_value = b"/home/user/miniforge3/bin/conda\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "conda env list" in cmd:
+            elif "env list" in cmd:
+                # conda env list command (now with shlex.quote)
                 mock_stdout.read.return_value = b"""# conda environments:
 #
 base                  *  /home/user/miniforge3
@@ -593,3 +645,77 @@ class TestSSHManagerJump:
         mock_main_client.close.assert_called_once()
         assert not manager.is_connected
         assert not manager.is_jump_connected
+
+
+class TestHostKeyPolicy:
+    """Test host key verification functionality."""
+
+    def test_get_fingerprint(self):
+        """Test fingerprint generation."""
+        mock_key = MagicMock()
+        mock_key.asbytes.return_value = b"test_key_data"
+
+        fingerprint = InteractiveHostKeyPolicy.get_fingerprint(mock_key)
+
+        assert fingerprint.startswith("SHA256:")
+        assert len(fingerprint) > 10
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_auto_add_host_keys(self, mock_ssh_class):
+        """Test that auto_add_host_keys=True accepts unknown hosts."""
+        mock_client = MagicMock()
+        mock_ssh_class.return_value = mock_client
+
+        # Create manager with auto_add_host_keys=True
+        manager = SSHManager(auto_add_host_keys=True)
+        manager.connect("user@192.168.1.100", password="secret")
+
+        # Should not raise any exception
+        mock_client.connect.assert_called_once()
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_host_key_callback_accept(self, mock_ssh_class):
+        """Test that host_key_callback can accept a host."""
+        mock_client = MagicMock()
+        mock_ssh_class.return_value = mock_client
+
+        # Create callback that accepts all hosts
+        def accept_callback(hostname, key_type, fingerprint):
+            return True
+
+        manager = SSHManager(host_key_callback=accept_callback)
+        manager.connect("user@192.168.1.100", password="secret")
+
+        mock_client.connect.assert_called_once()
+
+    @patch('core.ssh_manager.paramiko.SSHClient')
+    def test_host_key_callback_reject(self, mock_ssh_class):
+        """Test that host_key_callback can reject a host."""
+        mock_client = MagicMock()
+        mock_key = MagicMock()
+        mock_key.get_name.return_value = "ssh-rsa"
+        mock_key.asbytes.return_value = b"key_data"
+        mock_ssh_class.return_value = mock_client
+
+        # Create callback that rejects all hosts
+        def reject_callback(hostname, key_type, fingerprint):
+            return False
+
+        # Create policy directly for testing
+        policy = InteractiveHostKeyPolicy(confirm_callback=reject_callback)
+
+        with pytest.raises(HostKeyVerificationError):
+            policy.missing_host_key(mock_client, "testhost", mock_key)
+
+    def test_host_key_policy_no_callback_rejects(self):
+        """Test that no callback and no auto_add rejects unknown hosts."""
+        mock_client = MagicMock()
+        mock_key = MagicMock()
+        mock_key.get_name.return_value = "ssh-rsa"
+        mock_key.asbytes.return_value = b"key_data"
+
+        # Create policy without callback or auto_add
+        policy = InteractiveHostKeyPolicy(confirm_callback=None, auto_add=False)
+
+        with pytest.raises(HostKeyVerificationError):
+            policy.missing_host_key(mock_client, "testhost", mock_key)

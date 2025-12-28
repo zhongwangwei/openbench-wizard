@@ -591,7 +591,7 @@ class PageGeneral(BasePage):
         error = FieldValidator.required(
             self.basename_input.text().strip(),
             "basename",
-            "项目名称不能为空",
+            "Project name is required",
             page_id=self.PAGE_ID,
             widget=self.basename_input
         )
@@ -602,7 +602,7 @@ class PageGeneral(BasePage):
         error = FieldValidator.required(
             self.basedir_input.path().strip(),
             "basedir",
-            "输出目录不能为空",
+            "Output directory is required",
             page_id=self.PAGE_ID,
             widget=self.basedir_input
         )
@@ -614,7 +614,7 @@ class PageGeneral(BasePage):
             self.syear_spin.value(),
             self.eyear_spin.value(),
             "year_range",
-            "起始年份不能大于结束年份",
+            "Start year cannot be greater than end year",
             page_id=self.PAGE_ID,
             widget=self.syear_spin
         )
@@ -626,7 +626,7 @@ class PageGeneral(BasePage):
             self.min_lat_spin.value(),
             -90.0, 90.0,
             "min_lat",
-            "最小纬度范围无效（-90 到 90）",
+            "Minimum latitude is invalid (must be -90 to 90)",
             page_id=self.PAGE_ID,
             widget=self.min_lat_spin
         )
@@ -637,7 +637,7 @@ class PageGeneral(BasePage):
             self.max_lat_spin.value(),
             -90.0, 90.0,
             "max_lat",
-            "最大纬度范围无效（-90 到 90）",
+            "Maximum latitude is invalid (must be -90 to 90)",
             page_id=self.PAGE_ID,
             widget=self.max_lat_spin
         )
@@ -648,7 +648,7 @@ class PageGeneral(BasePage):
             self.min_lat_spin.value(),
             self.max_lat_spin.value(),
             "lat_range",
-            "最小纬度不能大于最大纬度",
+            "Minimum latitude cannot be greater than maximum latitude",
             page_id=self.PAGE_ID,
             widget=self.min_lat_spin
         )
@@ -660,7 +660,7 @@ class PageGeneral(BasePage):
             self.min_lon_spin.value(),
             -180.0, 180.0,
             "min_lon",
-            "最小经度范围无效（-180 到 180）",
+            "Minimum longitude is invalid (must be -180 to 180)",
             page_id=self.PAGE_ID,
             widget=self.min_lon_spin
         )
@@ -671,7 +671,7 @@ class PageGeneral(BasePage):
             self.max_lon_spin.value(),
             -180.0, 180.0,
             "max_lon",
-            "最大经度范围无效（-180 到 180）",
+            "Maximum longitude is invalid (must be -180 to 180)",
             page_id=self.PAGE_ID,
             widget=self.max_lon_spin
         )
@@ -682,7 +682,7 @@ class PageGeneral(BasePage):
             self.min_lon_spin.value(),
             self.max_lon_spin.value(),
             "lon_range",
-            "最小经度不能大于最大经度",
+            "Minimum longitude cannot be greater than maximum longitude",
             page_id=self.PAGE_ID,
             widget=self.min_lon_spin
         )

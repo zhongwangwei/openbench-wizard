@@ -3,12 +3,12 @@
 """
 OpenBench NML Wizard - Command Line Interface
 
-用于在服务器上无 GUI 环境下生成 NML 配置文件。
+For generating NML configuration files on servers without GUI.
 
 Usage:
-    python cli.py --interactive           # 交互式配置
-    python cli.py --config config.yaml    # 从配置文件生成
-    python cli.py --template              # 生成配置模板
+    python cli.py --interactive           # Interactive configuration
+    python cli.py --config config.yaml    # Generate from config file
+    python cli.py --template              # Generate config template
 """
 
 import argparse
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from core.config_manager import ConfigManager
 
 
-# 评估项目定义
+# Evaluation items definition
 EVALUATION_ITEMS = {
     "Carbon Cycle": [
         "Biomass", "Ecosystem_Respiration", "Gross_Primary_Productivity",
@@ -57,7 +57,7 @@ SCORES = [
 
 
 def print_header():
-    """打印程序头部"""
+    """Print program header."""
     print("=" * 60)
     print("  OpenBench NML Wizard - Command Line Interface")
     print("=" * 60)
@@ -65,14 +65,14 @@ def print_header():
 
 
 def print_section(title):
-    """打印章节标题"""
+    """Print section title."""
     print()
     print(f"--- {title} ---")
     print()
 
 
 def get_input(prompt, default=None, required=True):
-    """获取用户输入"""
+    """Get user input."""
     if default is not None:
         prompt = f"{prompt} [{default}]: "
     else:
@@ -84,46 +84,46 @@ def get_input(prompt, default=None, required=True):
             return default
         if value or not required:
             return value
-        print("  此项为必填，请输入值。")
+        print("  This field is required, please enter a value.")
 
 
 def get_number(prompt, default=None, min_val=None, max_val=None):
-    """获取数字输入"""
+    """Get numeric input."""
     while True:
         value = get_input(prompt, default)
         try:
             num = float(value)
             if min_val is not None and num < min_val:
-                print(f"  值必须 >= {min_val}")
+                print(f"  Value must be >= {min_val}")
                 continue
             if max_val is not None and num > max_val:
-                print(f"  值必须 <= {max_val}")
+                print(f"  Value must be <= {max_val}")
                 continue
             return num
         except ValueError:
-            print("  请输入有效数字。")
+            print("  Please enter a valid number.")
 
 
 def get_yes_no(prompt, default=True):
-    """获取是/否输入"""
+    """Get yes/no input."""
     default_str = "Y/n" if default else "y/N"
     while True:
         value = input(f"{prompt} [{default_str}]: ").strip().lower()
         if not value:
             return default
-        if value in ('y', 'yes', '是'):
+        if value in ('y', 'yes'):
             return True
-        if value in ('n', 'no', '否'):
+        if value in ('n', 'no'):
             return False
-        print("  请输入 y 或 n")
+        print("  Please enter y or n")
 
 
 def select_items(items, title):
-    """交互式选择项目"""
+    """Interactive item selection."""
     print(f"\n{title}")
     print("-" * 40)
 
-    # 显示所有项目
+    # Display all items
     all_items = []
     for category, category_items in items.items():
         print(f"\n  [{category}]")
@@ -132,13 +132,13 @@ def select_items(items, title):
             print(f"    {idx:2d}. {item}")
             all_items.append(item)
 
-    print("\n输入选项:")
-    print("  - 输入数字（逗号分隔）选择项目，如: 0,1,5,10")
-    print("  - 输入 'all' 选择全部")
-    print("  - 输入 'none' 或直接回车跳过")
+    print("\nInput options:")
+    print("  - Enter numbers (comma-separated) to select items, e.g.: 0,1,5,10")
+    print("  - Enter 'all' to select all")
+    print("  - Enter 'none' or press Enter to skip")
 
     while True:
-        selection = input("\n请选择: ").strip().lower()
+        selection = input("\nYour selection: ").strip().lower()
 
         if not selection or selection == 'none':
             return []
@@ -153,26 +153,26 @@ def select_items(items, title):
                 if 0 <= idx < len(all_items):
                     selected.append(all_items[idx])
                 else:
-                    print(f"  无效索引: {idx}")
+                    print(f"  Invalid index: {idx}")
                     break
             else:
                 return selected
         except ValueError:
-            print("  请输入有效的数字，用逗号分隔。")
+            print("  Please enter valid numbers, separated by commas.")
 
 
 def select_from_list(items, title):
-    """从列表中选择"""
+    """Select from list."""
     print(f"\n{title}")
     print("-" * 40)
 
     for i, item in enumerate(items):
         print(f"  {i:2d}. {item}")
 
-    print("\n输入 'all' 选择全部，数字选择特定项，回车跳过")
+    print("\nEnter 'all' to select all, numbers for specific items, Enter to skip")
 
     while True:
-        selection = input("\n请选择: ").strip().lower()
+        selection = input("\nYour selection: ").strip().lower()
 
         if not selection:
             return []
@@ -188,108 +188,108 @@ def select_from_list(items, title):
                     selected.append(items[idx])
             return selected
         except ValueError:
-            print("  请输入有效的数字。")
+            print("  Please enter valid numbers.")
 
 
 def configure_data_source(source_type):
-    """配置数据源"""
-    print(f"\n配置 {source_type} 数据源")
+    """Configure data source."""
+    print(f"\nConfigure {source_type} data source")
     print("-" * 40)
 
     sources = {}
 
     while True:
-        name = get_input("数据源名称 (输入空值结束)", required=False)
+        name = get_input("Source name (empty to finish)", required=False)
         if not name:
             break
 
-        print(f"\n  配置 '{name}':")
+        print(f"\n  Configure '{name}':")
         source = {
-            "dir": get_input("    数据目录"),
-            "suffix": get_input("    文件后缀", ".nc"),
-            "varname": get_input("    变量名"),
-            "syear": int(get_number("    起始年份", 2000)),
-            "eyear": int(get_number("    结束年份", 2020)),
-            "tim_res": get_input("    时间分辨率", "monthly"),
-            "nlon": int(get_number("    经度格点数", 720)),
-            "nlat": int(get_number("    纬度格点数", 360)),
-            "geo_res": get_number("    空间分辨率(度)", 0.5),
-            "data_type": get_input("    数据类型", "flux"),
+            "dir": get_input("    Data directory"),
+            "suffix": get_input("    File suffix", ".nc"),
+            "varname": get_input("    Variable name"),
+            "syear": int(get_number("    Start year", 2000)),
+            "eyear": int(get_number("    End year", 2020)),
+            "tim_res": get_input("    Time resolution", "monthly"),
+            "nlon": int(get_number("    Number of longitude points", 720)),
+            "nlat": int(get_number("    Number of latitude points", 360)),
+            "geo_res": get_number("    Spatial resolution (degrees)", 0.5),
+            "data_type": get_input("    Data type", "flux"),
         }
         sources[name] = source
-        print(f"  ✓ 已添加数据源: {name}")
+        print(f"  ✓ Added data source: {name}")
 
     return sources
 
 
 def interactive_mode():
-    """交互式配置模式"""
+    """Interactive configuration mode."""
     print_header()
 
     config = ConfigManager()
 
-    # === 通用设置 ===
-    print_section("1. 通用设置")
+    # === General Settings ===
+    print_section("1. General Settings")
 
     general = {
-        "casename": get_input("案例名称", "my_evaluation"),
-        "basedir": get_input("输出基础目录", os.path.expanduser("~/openbench_output")),
-        "start_year": int(get_number("起始年份", 2000)),
-        "end_year": int(get_number("结束年份", 2020)),
-        "min_lat": get_number("最小纬度", -90, -90, 90),
-        "max_lat": get_number("最大纬度", 90, -90, 90),
-        "min_lon": get_number("最小经度", -180, -180, 180),
-        "max_lon": get_number("最大经度", 180, -180, 180),
-        "comparison": get_yes_no("启用比较功能?", False),
-        "statistics": get_yes_no("启用统计功能?", False),
+        "casename": get_input("Case name", "my_evaluation"),
+        "basedir": get_input("Output base directory", os.path.expanduser("~/openbench_output")),
+        "start_year": int(get_number("Start year", 2000)),
+        "end_year": int(get_number("End year", 2020)),
+        "min_lat": get_number("Minimum latitude", -90, -90, 90),
+        "max_lat": get_number("Maximum latitude", 90, -90, 90),
+        "min_lon": get_number("Minimum longitude", -180, -180, 180),
+        "max_lon": get_number("Maximum longitude", 180, -180, 180),
+        "comparison": get_yes_no("Enable comparison?", False),
+        "statistics": get_yes_no("Enable statistics?", False),
     }
     config.update_section("general", general)
 
-    # === 评估项目 ===
-    print_section("2. 选择评估项目")
+    # === Evaluation Items ===
+    print_section("2. Select Evaluation Items")
 
-    selected_items = select_items(EVALUATION_ITEMS, "可用评估项目:")
+    selected_items = select_items(EVALUATION_ITEMS, "Available evaluation items:")
     eval_items = {item: True for item in selected_items}
     config.update_section("evaluation_items", eval_items)
-    print(f"\n✓ 已选择 {len(selected_items)} 个评估项目")
+    print(f"\n✓ Selected {len(selected_items)} evaluation items")
 
-    # === 指标 ===
-    print_section("3. 选择评估指标")
+    # === Metrics ===
+    print_section("3. Select Evaluation Metrics")
 
-    selected_metrics = select_from_list(METRICS, "可用指标:")
+    selected_metrics = select_from_list(METRICS, "Available metrics:")
     metrics = {m: True for m in selected_metrics}
     config.update_section("metrics", metrics)
-    print(f"\n✓ 已选择 {len(selected_metrics)} 个指标")
+    print(f"\n✓ Selected {len(selected_metrics)} metrics")
 
-    # === 评分 ===
-    print_section("4. 选择评分项")
+    # === Scores ===
+    print_section("4. Select Score Items")
 
-    selected_scores = select_from_list(SCORES, "可用评分:")
+    selected_scores = select_from_list(SCORES, "Available scores:")
     scores = {s: True for s in selected_scores}
     config.update_section("scores", scores)
-    print(f"\n✓ 已选择 {len(selected_scores)} 个评分项")
+    print(f"\n✓ Selected {len(selected_scores)} score items")
 
-    # === 参考数据 ===
-    print_section("5. 配置参考数据")
+    # === Reference Data ===
+    print_section("5. Configure Reference Data")
 
-    if get_yes_no("是否配置参考数据?", True):
-        ref_data = configure_data_source("参考")
+    if get_yes_no("Configure reference data?", True):
+        ref_data = configure_data_source("reference")
         config.update_section("ref_data", ref_data)
 
-    # === 模拟数据 ===
-    print_section("6. 配置模拟数据")
+    # === Simulation Data ===
+    print_section("6. Configure Simulation Data")
 
-    if get_yes_no("是否配置模拟数据?", True):
-        sim_data = configure_data_source("模拟")
+    if get_yes_no("Configure simulation data?", True):
+        sim_data = configure_data_source("simulation")
         config.update_section("sim_data", sim_data)
 
-    # === 生成配置文件 ===
-    print_section("7. 生成配置文件")
+    # === Generate Configuration Files ===
+    print_section("7. Generate Configuration Files")
 
-    output_dir = get_input("配置文件输出目录", general["basedir"])
+    output_dir = get_input("Configuration output directory", general["basedir"])
     os.makedirs(output_dir, exist_ok=True)
 
-    # 生成并保存
+    # Generate and save
     main_nml = config.generate_main_nml()
     ref_nml = config.generate_ref_nml()
     sim_nml = config.generate_sim_nml()
@@ -307,16 +307,16 @@ def interactive_mode():
 
     print()
     print("=" * 60)
-    print("  配置文件生成完成!")
+    print("  Configuration files generated successfully!")
     print("=" * 60)
     print()
-    print(f"  主配置文件: {main_path}")
-    print(f"  参考数据配置: {ref_path}")
-    print(f"  模拟数据配置: {sim_path}")
+    print(f"  Main config file: {main_path}")
+    print(f"  Reference data config: {ref_path}")
+    print(f"  Simulation data config: {sim_path}")
     print()
 
-    # 预览
-    if get_yes_no("是否预览主配置文件?", True):
+    # Preview
+    if get_yes_no("Preview main config file?", True):
         print("\n--- main_nml.yaml ---")
         print(main_nml)
 
@@ -324,9 +324,9 @@ def interactive_mode():
 
 
 def generate_template(output_path):
-    """生成配置模板文件"""
-    template = """# OpenBench NML Wizard 配置模板
-# 使用方法: python cli.py --config this_file.yaml
+    """Generate configuration template file."""
+    template = """# OpenBench NML Wizard Configuration Template
+# Usage: python cli.py --config this_file.yaml
 
 general:
   casename: my_evaluation
@@ -344,18 +344,18 @@ evaluation_items:
   Gross_Primary_Productivity: true
   Evapotranspiration: true
   Latent_Heat: true
-  # 添加更多评估项...
+  # Add more evaluation items...
 
 metrics:
   RMSE: true
   Correlation: true
   Bias: true
-  # 添加更多指标...
+  # Add more metrics...
 
 scores:
   Overall_Score: true
   Bias_Score: true
-  # 添加更多评分项...
+  # Add more score items...
 
 ref_data:
   FLUXNET:
@@ -387,35 +387,35 @@ sim_data:
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(template)
 
-    print(f"✓ 配置模板已生成: {output_path}")
-    print("\n编辑此文件后，使用以下命令生成 NML 配置:")
+    print(f"✓ Configuration template generated: {output_path}")
+    print("\nAfter editing this file, use the following command to generate NML config:")
     print(f"  python cli.py --config {output_path}")
 
 
 def from_config_file(config_path, output_dir=None):
-    """从配置文件生成 NML"""
+    """Generate NML from configuration file."""
     import yaml
 
-    print(f"读取配置文件: {config_path}")
+    print(f"Reading configuration file: {config_path}")
 
     with open(config_path, 'r', encoding='utf-8') as f:
         user_config = yaml.safe_load(f)
 
     config = ConfigManager()
 
-    # 加载各节配置
+    # Load section configurations
     for section in ['general', 'evaluation_items', 'metrics', 'scores',
                     'comparisons', 'statistics', 'ref_data', 'sim_data']:
         if section in user_config:
             config.update_section(section, user_config[section])
 
-    # 确定输出目录
+    # Determine output directory
     if output_dir is None:
         output_dir = user_config.get('general', {}).get('basedir', '.')
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # 生成并保存
+    # Generate and save
     main_nml = config.generate_main_nml()
     ref_nml = config.generate_ref_nml()
     sim_nml = config.generate_sim_nml()
@@ -432,23 +432,23 @@ def from_config_file(config_path, output_dir=None):
         f.write(sim_nml)
 
     print()
-    print("✓ 配置文件生成完成!")
-    print(f"  主配置文件: {main_path}")
-    print(f"  参考数据配置: {ref_path}")
-    print(f"  模拟数据配置: {sim_path}")
+    print("✓ Configuration files generated successfully!")
+    print(f"  Main config file: {main_path}")
+    print(f"  Reference data config: {ref_path}")
+    print(f"  Simulation data config: {sim_path}")
 
     return str(main_path)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenBench NML Wizard - 命令行界面",
+        description="OpenBench NML Wizard - Command Line Interface",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
-  python cli.py --interactive              # 交互式配置
-  python cli.py --template                 # 生成配置模板
-  python cli.py --config my_config.yaml    # 从配置文件生成
+Examples:
+  python cli.py --interactive              # Interactive configuration
+  python cli.py --template                 # Generate config template
+  python cli.py --config my_config.yaml    # Generate from config file
   python cli.py --config my_config.yaml --output /path/to/output
         """
     )
@@ -456,13 +456,13 @@ def main():
     parser.add_argument(
         '-i', '--interactive',
         action='store_true',
-        help='交互式配置模式'
+        help='Interactive configuration mode'
     )
 
     parser.add_argument(
         '-c', '--config',
         type=str,
-        help='从指定配置文件生成 NML'
+        help='Generate NML from specified config file'
     )
 
     parser.add_argument(
@@ -470,21 +470,21 @@ def main():
         type=str,
         nargs='?',
         const='wizard_config_template.yaml',
-        help='生成配置模板文件'
+        help='Generate configuration template file'
     )
 
     parser.add_argument(
         '-o', '--output',
         type=str,
-        help='输出目录'
+        help='Output directory'
     )
 
     args = parser.parse_args()
 
-    # 没有参数时显示帮助
+    # Show help when no arguments provided
     if len(sys.argv) == 1:
         parser.print_help()
-        print("\n提示: 使用 --interactive 进入交互式配置模式")
+        print("\nTip: Use --interactive to enter interactive configuration mode")
         return
 
     if args.template:

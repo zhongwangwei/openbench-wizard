@@ -59,7 +59,7 @@ class PageScores(BasePage):
         error = FieldValidator.selection_required(
             combined,
             "metrics_scores",
-            "请至少选择一个指标或评分项",
+            "Please select at least one metric or score",
             page_id=self.PAGE_ID
         )
 

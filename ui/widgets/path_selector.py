@@ -16,6 +16,7 @@ class PathSelector(QWidget):
     """Widget for selecting file or directory paths."""
 
     path_changed = Signal(str)
+    browse_clicked = Signal()  # Emitted when browse button is clicked
 
     def __init__(
         self,
@@ -37,6 +38,7 @@ class PathSelector(QWidget):
         self.mode = mode
         self.filter = filter or "All Files (*)"
         self._last_dir = os.path.expanduser("~")
+        self._custom_browse_handler = None
 
         self._setup_ui(placeholder)
         self._connect_signals()
@@ -67,6 +69,14 @@ class PathSelector(QWidget):
 
     def _on_browse_clicked(self):
         """Handle browse button click."""
+        # Emit signal first
+        self.browse_clicked.emit()
+
+        # If custom handler is set, use it instead
+        if self._custom_browse_handler:
+            self._custom_browse_handler()
+            return
+
         if self.mode == "directory":
             path = QFileDialog.getExistingDirectory(
                 self,
@@ -85,6 +95,15 @@ class PathSelector(QWidget):
         if path:
             self._last_dir = os.path.dirname(path) if self.mode == "file" else path
             self.line_edit.setText(path)
+
+    def set_custom_browse_handler(self, handler):
+        """Set a custom browse handler function.
+
+        Args:
+            handler: Callable that handles the browse action.
+                     Set to None to use default file dialog.
+        """
+        self._custom_browse_handler = handler
 
     def _on_text_changed(self, text: str):
         """Handle text changes."""

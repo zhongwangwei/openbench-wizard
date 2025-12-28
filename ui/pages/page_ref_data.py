@@ -510,26 +510,38 @@ class PageRefData(BasePage):
 
             # Validate each source has required fields
             for source_name, source_data in sources.items():
-                # Check varname
-                varname = source_data.get("varname", "")
+                # Check varname - can be at top level, in general, or in var_config
+                general = source_data.get("general", {})
+                var_config = source_data.get("var_config", {})
+                varname = (
+                    source_data.get("varname") or
+                    var_config.get("varname") or
+                    general.get("varname") or
+                    ""
+                )
                 if not varname:
-                    error = ValidationError(
-                        field_name="varname",
-                        message=f"Variable name is required\n\nData source: {source_name}\nVariable: {var_name.replace('_', ' ')}",
-                        page_id=self.PAGE_ID,
-                        context={"var_name": var_name, "source_name": source_name}
+                    # Show warning and ask for confirmation
+                    reply = QMessageBox.warning(
+                        self,
+                        "Variable Name Missing",
+                        f"Variable name is not set for:\n\n"
+                        f"Data source: {source_name}\n"
+                        f"Variable: {var_name.replace('_', ' ')}\n\n"
+                        f"Is this variable defined in the filter configuration?\n\n"
+                        f"Click 'Yes' to continue, 'No' to edit the source.",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
                     )
-                    manager.show_error_and_focus(error)
-                    # Auto-open edit source dialog
-                    self._select_and_edit_source(var_name, source_name)
-                    return False
+                    if reply == QMessageBox.No:
+                        self._select_and_edit_source(var_name, source_name)
+                        return False
 
                 # Check prefix/suffix (only for grid data, not station data)
-                general = source_data.get("general", {})
+                # prefix/suffix can be at top level or in general section
                 data_type = general.get("data_type", "grid")
                 if data_type != "stn":
-                    prefix = source_data.get("prefix", "")
-                    suffix = source_data.get("suffix", "")
+                    prefix = source_data.get("prefix") or general.get("prefix") or ""
+                    suffix = source_data.get("suffix") or general.get("suffix") or ""
                     if not prefix and not suffix:
                         error = ValidationError(
                             field_name="prefix/suffix",

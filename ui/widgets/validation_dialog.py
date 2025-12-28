@@ -73,7 +73,7 @@ class ValidationProgressDialog(QDialog):
         parent=None
     ):
         super().__init__(parent)
-        self.setWindowTitle("正在验证数据...")
+        self.setWindowTitle("Validating Data...")
         self.setModal(True)
         self.setMinimumWidth(400)
         self.setMinimumHeight(150)
@@ -100,7 +100,7 @@ class ValidationProgressDialog(QDialog):
         layout.addWidget(self.progress_bar)
 
         # Progress label
-        self.progress_label = QLabel("准备中...")
+        self.progress_label = QLabel("Preparing...")
         layout.addWidget(self.progress_label)
 
         # Current item label
@@ -111,7 +111,7 @@ class ValidationProgressDialog(QDialog):
         # Cancel button
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self._on_cancel)
         btn_layout.addWidget(self.cancel_btn)
         layout.addLayout(btn_layout)
@@ -124,7 +124,7 @@ class ValidationProgressDialog(QDialog):
             self.progress_label.setText(f"{current}/{total}")
 
         if var_name and source_name:
-            self.current_label.setText(f"当前: {var_name} / {source_name}")
+            self.current_label.setText(f"Current: {var_name} / {source_name}")
 
     def _on_finished(self, report: DataValidationReport):
         """Handle validation finished."""
@@ -133,7 +133,7 @@ class ValidationProgressDialog(QDialog):
 
     def _on_error(self, error: str):
         """Handle validation error."""
-        QMessageBox.warning(self, "验证错误", f"验证过程中出错:\n{error}")
+        QMessageBox.warning(self, "Validation Error", f"Error during validation:\n{error}")
         self.reject()
 
     def _on_cancel(self):
@@ -152,7 +152,7 @@ class ValidationResultsDialog(QDialog):
 
     def __init__(self, report: DataValidationReport, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("数据验证结果")
+        self.setWindowTitle("Data Validation Results")
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
 
@@ -166,22 +166,22 @@ class ValidationResultsDialog(QDialog):
 
         # Summary
         summary = QLabel(
-            f"验证完成: {self._report.passed_count} 通过, "
-            f"{self._report.failed_count} 失败"
+            f"Validation complete: {self._report.passed_count} passed, "
+            f"{self._report.failed_count} failed"
         )
         summary.setStyleSheet("font-size: 14px; font-weight: bold;")
         layout.addWidget(summary)
 
         # Results tree
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["数据源", "状态"])
+        self.tree.setHeaderLabels(["Data Source", "Status"])
         self.tree.setColumnWidth(0, 400)
         self._populate_tree()
         layout.addWidget(self.tree)
 
         # Buttons
         btn_box = QDialogButtonBox()
-        self.export_btn = QPushButton("导出")
+        self.export_btn = QPushButton("Export")
         self.export_btn.clicked.connect(self._export_results)
         btn_box.addButton(self.export_btn, QDialogButtonBox.ActionRole)
         btn_box.addButton(QDialogButtonBox.Ok)
@@ -216,7 +216,7 @@ class ValidationResultsDialog(QDialog):
     def _export_results(self):
         """Export results to text file."""
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "导出验证结果", "validation_results.txt",
+            self, "Export Validation Results", "validation_results.txt",
             "Text Files (*.txt)"
         )
         if not file_path:
@@ -224,18 +224,18 @@ class ValidationResultsDialog(QDialog):
 
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write("数据验证结果\n")
+                f.write("Data Validation Results\n")
                 f.write("=" * 50 + "\n\n")
-                f.write(f"通过: {self._report.passed_count}\n")
-                f.write(f"失败: {self._report.failed_count}\n\n")
+                f.write(f"Passed: {self._report.passed_count}\n")
+                f.write(f"Failed: {self._report.failed_count}\n\n")
 
                 for result in self._report.results:
-                    status = "✓ 通过" if result.is_valid else "✗ 失败"
+                    status = "✓ Passed" if result.is_valid else "✗ Failed"
                     f.write(f"{result.var_name} / {result.source_name}: {status}\n")
                     for check in result.failed_checks:
                         f.write(f"  - {check.message}\n")
                     f.write("\n")
 
-            QMessageBox.information(self, "导出成功", f"结果已导出到:\n{file_path}")
+            QMessageBox.information(self, "Export Successful", f"Results exported to:\n{file_path}")
         except Exception as e:
-            QMessageBox.warning(self, "导出失败", f"无法导出结果:\n{e}")
+            QMessageBox.warning(self, "Export Failed", f"Failed to export results:\n{e}")

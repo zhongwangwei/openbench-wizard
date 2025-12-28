@@ -7,10 +7,16 @@ Handles SSH connections, file transfers, and remote command execution.
 
 import os
 import re
+import shlex
+import logging
+from pathlib import Path
 from typing import Optional, Tuple, List, Callable, Generator
 
 import paramiko
-from paramiko import SSHClient, AutoAddPolicy, RSAKey, SSHException
+from paramiko import SSHClient, RSAKey, SSHException
+from paramiko.hostkeys import HostKeys
+
+logger = logging.getLogger(__name__)
 
 
 class SSHConnectionError(Exception):
@@ -18,14 +24,180 @@ class SSHConnectionError(Exception):
     pass
 
 
+class HostKeyVerificationError(Exception):
+    """Host key verification failed."""
+    pass
+
+
+class InteractiveHostKeyPolicy(paramiko.MissingHostKeyPolicy):
+    """Host key policy that prompts user for unknown hosts.
+
+    This policy:
+    1. Accepts hosts that are in the known_hosts file
+    2. Calls a callback function for unknown hosts to get user confirmation
+    3. Optionally saves confirmed hosts to the known_hosts file
+    """
+
+    def __init__(
+        self,
+        known_hosts_path: Optional[str] = None,
+        confirm_callback: Optional[Callable[[str, str, str], bool]] = None,
+        auto_add: bool = False
+    ):
+        """Initialize the host key policy.
+
+        Args:
+            known_hosts_path: Path to known_hosts file. Defaults to ~/.openbench_wizard/known_hosts
+            confirm_callback: Callback function that receives (hostname, key_type, fingerprint)
+                            and returns True to accept the key, False to reject.
+                            If None and host is unknown, raises HostKeyVerificationError.
+            auto_add: If True, automatically add unknown hosts (less secure, for testing)
+        """
+        self._known_hosts_path = known_hosts_path or self._get_default_known_hosts_path()
+        self._confirm_callback = confirm_callback
+        self._auto_add = auto_add
+        self._host_keys = HostKeys()
+        self._load_known_hosts()
+
+    @staticmethod
+    def _get_default_known_hosts_path() -> str:
+        """Get the default known_hosts file path."""
+        config_dir = Path.home() / ".openbench_wizard"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return str(config_dir / "known_hosts")
+
+    def _load_known_hosts(self) -> None:
+        """Load known hosts from file."""
+        if os.path.exists(self._known_hosts_path):
+            try:
+                self._host_keys.load(self._known_hosts_path)
+                logger.debug(f"Loaded known hosts from {self._known_hosts_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load known hosts: {e}")
+
+    def _save_host_key(self, hostname: str, key: paramiko.PKey) -> None:
+        """Save a host key to the known_hosts file.
+
+        Args:
+            hostname: The hostname
+            key: The host key to save
+        """
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self._known_hosts_path), exist_ok=True)
+
+            # Add the key
+            self._host_keys.add(hostname, key.get_name(), key)
+
+            # Save to file
+            self._host_keys.save(self._known_hosts_path)
+
+            # Set restrictive permissions (Unix only)
+            try:
+                os.chmod(self._known_hosts_path, 0o600)
+            except (OSError, AttributeError):
+                pass  # Windows doesn't support chmod
+
+            logger.info(f"Saved host key for {hostname}")
+        except Exception as e:
+            logger.warning(f"Failed to save host key: {e}")
+
+    @staticmethod
+    def get_fingerprint(key: paramiko.PKey) -> str:
+        """Get the fingerprint of a host key.
+
+        Args:
+            key: The host key
+
+        Returns:
+            SHA256 fingerprint string
+        """
+        import hashlib
+        import base64
+
+        key_bytes = key.asbytes()
+        digest = hashlib.sha256(key_bytes).digest()
+        fingerprint = base64.b64encode(digest).decode('ascii').rstrip('=')
+        return f"SHA256:{fingerprint}"
+
+    def missing_host_key(self, client: SSHClient, hostname: str, key: paramiko.PKey) -> None:
+        """Handle a missing host key.
+
+        Args:
+            client: The SSH client
+            hostname: The hostname
+            key: The host's public key
+
+        Raises:
+            HostKeyVerificationError: If the key is rejected
+        """
+        key_type = key.get_name()
+        fingerprint = self.get_fingerprint(key)
+
+        # Check if we already have a key for this host
+        existing_key = self._host_keys.lookup(hostname)
+        if existing_key is not None:
+            # Host exists but key is different - potential MITM attack!
+            if key_type in existing_key:
+                stored_key = existing_key[key_type]
+                if stored_key.asbytes() == key.asbytes():
+                    # Same key, all good
+                    return
+                else:
+                    # Different key - this is suspicious!
+                    raise HostKeyVerificationError(
+                        f"WARNING: Remote host identification has changed!\n"
+                        f"Host: {hostname}\n"
+                        f"Expected fingerprint: {self.get_fingerprint(stored_key)}\n"
+                        f"Received fingerprint: {fingerprint}\n"
+                        f"This could indicate a man-in-the-middle attack."
+                    )
+
+        # Auto-add mode (for testing/development)
+        if self._auto_add:
+            logger.warning(f"Auto-adding host key for {hostname} (auto_add=True)")
+            self._save_host_key(hostname, key)
+            return
+
+        # Ask user via callback
+        if self._confirm_callback is not None:
+            if self._confirm_callback(hostname, key_type, fingerprint):
+                self._save_host_key(hostname, key)
+                return
+            else:
+                raise HostKeyVerificationError(
+                    f"Host key verification rejected by user for {hostname}"
+                )
+
+        # No callback and not auto-add - reject
+        raise HostKeyVerificationError(
+            f"Unknown host: {hostname}\n"
+            f"Key type: {key_type}\n"
+            f"Fingerprint: {fingerprint}\n"
+            f"No confirmation callback provided."
+        )
+
+
 class SSHManager:
     """Manage SSH connections, file transfer, and remote command execution."""
 
-    def __init__(self, timeout: int = 30):
+    def __init__(
+        self,
+        timeout: int = 30,
+        host_key_callback: Optional[Callable[[str, str, str], bool]] = None,
+        auto_add_host_keys: bool = False
+    ):
         """Initialize SSH manager.
 
         Args:
             timeout: Connection timeout in seconds
+            host_key_callback: Callback function for unknown host keys.
+                             Receives (hostname, key_type, fingerprint) and returns
+                             True to accept, False to reject. If None and auto_add_host_keys
+                             is False, unknown hosts will be rejected.
+            auto_add_host_keys: If True, automatically accept unknown host keys.
+                              WARNING: This is less secure and should only be used
+                              for testing or in trusted networks.
         """
         self._client: Optional[SSHClient] = None
         self._sftp: Optional[paramiko.SFTPClient] = None
@@ -33,6 +205,8 @@ class SSHManager:
         self._host = ""
         self._user = ""
         self._port = 22
+        self._host_key_callback = host_key_callback
+        self._auto_add_host_keys = auto_add_host_keys
         # Multi-hop connection attributes
         self._jump_client: Optional[SSHClient] = None
         self._jump_channel = None
@@ -100,7 +274,13 @@ class SSHManager:
             raise SSHConnectionError("Username is required (format: user@host)")
 
         self._client = paramiko.SSHClient()
-        self._client.set_missing_host_key_policy(AutoAddPolicy())
+
+        # Use secure host key policy
+        policy = InteractiveHostKeyPolicy(
+            confirm_callback=self._host_key_callback,
+            auto_add=self._auto_add_host_keys
+        )
+        self._client.set_missing_host_key_policy(policy)
 
         try:
             self._client.connect(
@@ -210,7 +390,13 @@ class SSHManager:
 
             # Connect through the channel
             self._jump_client = paramiko.SSHClient()
-            self._jump_client.set_missing_host_key_policy(AutoAddPolicy())
+
+            # Use secure host key policy for jump connection
+            policy = InteractiveHostKeyPolicy(
+                confirm_callback=self._host_key_callback,
+                auto_add=self._auto_add_host_keys
+            )
+            self._jump_client.set_missing_host_key_policy(policy)
 
             if main_password:
                 # Password authentication for compute node
@@ -314,7 +500,7 @@ class SSHManager:
         command: str,
         callback: Optional[Callable[[str], None]] = None
     ) -> Generator[str, None, int]:
-        """Execute command and stream output.
+        """Execute command and stream output (both stdout and stderr).
 
         Uses the active client (jump client if connected, otherwise main client).
 
@@ -323,11 +509,13 @@ class SSHManager:
             callback: Optional callback for each line of output
 
         Yields:
-            Lines of output
+            Lines of output (from both stdout and stderr)
 
         Returns:
             Exit code
         """
+        import select
+
         client = self.get_active_client()
         if client is None:
             raise SSHConnectionError("Not connected to server")
@@ -336,14 +524,42 @@ class SSHManager:
         channel = transport.open_session()
         channel.exec_command(command)
 
-        # Read output in real-time
-        while not channel.exit_status_ready() or channel.recv_ready():
+        # Make channel non-blocking for reading
+        channel.setblocking(0)
+
+        # Read output in real-time from both stdout and stderr
+        while not channel.exit_status_ready() or channel.recv_ready() or channel.recv_stderr_ready():
+            # Use select to wait for data with timeout
+            readable, _, _ = select.select([channel], [], [], 0.1)
+
             if channel.recv_ready():
                 data = channel.recv(4096).decode('utf-8', errors='replace')
                 for line in data.splitlines(keepends=True):
                     if callback:
                         callback(line)
                     yield line
+
+            if channel.recv_stderr_ready():
+                data = channel.recv_stderr(4096).decode('utf-8', errors='replace')
+                for line in data.splitlines(keepends=True):
+                    if callback:
+                        callback(line)
+                    yield line
+
+        # Read any remaining data after exit
+        while channel.recv_ready():
+            data = channel.recv(4096).decode('utf-8', errors='replace')
+            for line in data.splitlines(keepends=True):
+                if callback:
+                    callback(line)
+                yield line
+
+        while channel.recv_stderr_ready():
+            data = channel.recv_stderr(4096).decode('utf-8', errors='replace')
+            for line in data.splitlines(keepends=True):
+                if callback:
+                    callback(line)
+                yield line
 
         return channel.recv_exit_status()
 
@@ -444,32 +660,61 @@ class SSHManager:
     def detect_python_interpreters(self) -> List[str]:
         """Detect available Python interpreters on remote server.
 
+        Searches for conda/miniconda installations in user's home directory.
+        Excludes system Python paths.
+
         Returns:
             List of Python interpreter paths
         """
         pythons = []
         home = self._get_home_dir()
 
-        # Check common locations
-        paths_to_check = [
-            "which python3",
-            "which python",
-            f"ls {home}/miniforge3/bin/python 2>/dev/null",
-            f"ls {home}/miniconda3/bin/python 2>/dev/null",
-            f"ls {home}/anaconda3/bin/python 2>/dev/null",
-            "ls /opt/homebrew/bin/python3 2>/dev/null",
-            "ls /usr/local/bin/python3 2>/dev/null",
+        # System paths to exclude (don't want system or /opt installs)
+        system_prefixes = ['/usr/bin', '/bin', '/opt/', '/usr/local/bin']
+
+        def is_system_path(path: str) -> bool:
+            return any(path.startswith(prefix) for prefix in system_prefixes)
+
+        # Method 1: Find conda/miniconda directories in home (handles miniconda3-3.12 etc.)
+        try:
+            # Find all conda-like directories
+            cmd = f"ls -d {home}/miniconda*/bin/python {home}/miniforge*/bin/python {home}/anaconda*/bin/python {home}/mambaforge*/bin/python 2>/dev/null"
+            stdout, _, exit_code = self.execute(cmd, timeout=10)
+            if exit_code == 0 and stdout.strip():
+                for path in stdout.strip().split('\n'):
+                    path = path.strip()
+                    if path and path not in pythons:
+                        pythons.append(path)
+        except Exception:
+            pass
+
+        # Method 2: Use interactive login shell (bash -i -l) to get same env as user
+        login_cmds = [
+            "bash -i -l -c 'which python3' 2>/dev/null",
+            "bash -i -l -c 'which python' 2>/dev/null",
         ]
 
-        for cmd in paths_to_check:
+        for cmd in login_cmds:
             try:
-                stdout, _, exit_code = self.execute(cmd, timeout=5)
+                stdout, _, exit_code = self.execute(cmd, timeout=15)
                 if exit_code == 0 and stdout.strip():
                     path = stdout.strip().split('\n')[0]
-                    if path and path not in pythons:
+                    if path and path not in pythons and not is_system_path(path):
                         pythons.append(path)
             except Exception:
                 continue
+
+        # Method 3: Check .local/bin (pip user install)
+        try:
+            local_python = f"{home}/.local/bin/python3"
+            quoted_python = shlex.quote(local_python)
+            stdout, _, exit_code = self.execute(f"test -x {quoted_python} && echo {quoted_python}", timeout=5)
+            if exit_code == 0 and stdout.strip():
+                result = stdout.strip()
+                if result and result not in pythons:
+                    pythons.append(result)
+        except Exception:
+            pass
 
         return pythons
 
@@ -482,26 +727,33 @@ class SSHManager:
         envs = []
         home = self._get_home_dir()
 
-        # Find conda executable
-        conda_paths = [
-            f"{home}/miniforge3/bin/conda",
-            f"{home}/miniconda3/bin/conda",
-            f"{home}/anaconda3/bin/conda",
-        ]
-
         conda_exe = None
-        for path in conda_paths:
-            stdout, _, exit_code = self.execute(f"test -f {path} && echo exists", timeout=5)
-            if exit_code == 0 and "exists" in stdout:
-                conda_exe = path
-                break
+
+        # Method 1: Use wildcard to find conda in versioned directories (e.g., miniconda3-3.12)
+        try:
+            cmd = f"ls -d {home}/miniconda*/bin/conda {home}/miniforge*/bin/conda {home}/anaconda*/bin/conda {home}/mambaforge*/bin/conda 2>/dev/null | head -1"
+            stdout, _, exit_code = self.execute(cmd, timeout=10)
+            if exit_code == 0 and stdout.strip():
+                conda_exe = stdout.strip().split('\n')[0]
+        except Exception:
+            pass
+
+        # Method 2: Try interactive login shell to get conda from user's environment
+        if not conda_exe:
+            try:
+                stdout, _, exit_code = self.execute("bash -i -l -c 'which conda' 2>/dev/null", timeout=15)
+                if exit_code == 0 and stdout.strip():
+                    conda_exe = stdout.strip().split('\n')[0]
+            except Exception:
+                pass
 
         if not conda_exe:
             return envs
 
         # Get environment list
         try:
-            stdout, _, exit_code = self.execute(f"{conda_exe} env list", timeout=10)
+            quoted_conda = shlex.quote(conda_exe)
+            stdout, _, exit_code = self.execute(f"{quoted_conda} env list", timeout=10)
             if exit_code == 0:
                 for line in stdout.strip().split('\n'):
                     line = line.strip()
@@ -529,5 +781,6 @@ class SSHManager:
             True if OpenBench is installed
         """
         check_file = f"{path}/openbench/openbench.py"
-        stdout, _, exit_code = self.execute(f"test -f {check_file} && echo exists", timeout=5)
+        quoted_file = shlex.quote(check_file)
+        stdout, _, exit_code = self.execute(f"test -f {quoted_file} && echo exists", timeout=5)
         return exit_code == 0 and "exists" in stdout

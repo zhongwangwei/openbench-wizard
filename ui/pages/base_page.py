@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from core.path_utils import get_openbench_root
+
 
 class BasePage(QWidget):
     """Base class for wizard pages."""
@@ -109,6 +111,19 @@ class BasePage(QWidget):
     def validate(self) -> bool:
         """Validate page input. Override in subclasses. Return False to prevent navigation."""
         return True
+
+    def _get_openbench_root(self) -> str:
+        """Get the OpenBench root directory.
+
+        Uses controller's project_root if available, otherwise falls back
+        to the default detected OpenBench root.
+
+        Returns:
+            Path to the OpenBench root directory
+        """
+        if self.controller.project_root:
+            return self.controller.project_root
+        return get_openbench_root()
 
     def showEvent(self, event):
         """Called when page becomes visible."""

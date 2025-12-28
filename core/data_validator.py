@@ -82,50 +82,52 @@ class FilePathGenerator:
         self.syear = syear
         self.eyear = eyear
 
-    def _build_path(self, filename: str) -> str:
-        """Build full path with root_dir and sub_dir."""
+    def _get_base_dir(self) -> str:
+        """Get the base directory path (root_dir + sub_dir)."""
         if self.sub_dir:
-            path = os.path.join(self.root_dir, self.sub_dir, filename)
+            path = os.path.join(self.root_dir, self.sub_dir)
         else:
-            path = os.path.join(self.root_dir, filename)
+            path = self.root_dir
         # Convert to absolute path using OpenBench root as base
         return to_absolute_path(path, get_openbench_root())
+
+    def _build_path(self, filename: str) -> str:
+        """Build full path with root_dir and sub_dir."""
+        base_dir = self._get_base_dir()
+        return os.path.join(base_dir, filename)
 
     def get_sample_paths(self) -> List[str]:
         """Get sample file paths for validation.
 
+        Uses glob pattern to find actual files matching prefix and suffix.
         Returns a small set of representative paths to check.
         """
+        import glob
+
+        base_dir = self._get_base_dir()
+
         if self.data_groupby == "Single":
+            # Exact match for single file
             filename = f"{self.prefix}{self.suffix}.nc"
             return [self._build_path(filename)]
 
-        elif self.data_groupby == "Year":
-            # Sample: first, middle, last year
-            years = [self.syear, (self.syear + self.eyear) // 2, self.eyear]
-            paths = []
-            for year in years:
-                filename = f"{self.prefix}{year}{self.suffix}.nc"
-                paths.append(self._build_path(filename))
-            return paths
+        # For Year/Month/Day, use glob to find matching files
+        # Pattern: {prefix}*{suffix}.nc
+        pattern = os.path.join(base_dir, f"{self.prefix}*{self.suffix}.nc")
+        matching_files = sorted(glob.glob(pattern))
 
-        elif self.data_groupby == "Month":
-            # Sample: first month of first and last year
-            paths = []
-            for year in [self.syear, self.eyear]:
-                for month in [1]:
-                    filename = f"{self.prefix}{year}{month:02d}{self.suffix}.nc"
-                    paths.append(self._build_path(filename))
-            return paths
+        if matching_files:
+            # Return first, middle, and last file as samples
+            if len(matching_files) == 1:
+                return matching_files
+            elif len(matching_files) == 2:
+                return matching_files
+            else:
+                mid = len(matching_files) // 2
+                return [matching_files[0], matching_files[mid], matching_files[-1]]
 
-        elif self.data_groupby == "Day":
-            # Sample: first day of first and last year
-            paths = []
-            for year in [self.syear, self.eyear]:
-                filename = f"{self.prefix}{year}0101{self.suffix}.nc"
-                paths.append(self._build_path(filename))
-            return paths
-
+        # If no files found via glob, return empty list
+        # The validation will report "no files found"
         return []
 
 
@@ -144,6 +146,15 @@ class LocalNetCDFValidator:
             return ValidationCheck("file_exists", True, f"File exists: {path}")
         return ValidationCheck("file_exists", False, f"File not found: {path}")
 
+    def _open_dataset(self, path: str):
+        """Open dataset, trying decode_times=False if default fails."""
+        import xarray as xr
+        try:
+            return xr.open_dataset(path)
+        except Exception:
+            # Try with decode_times=False for non-standard time units
+            return xr.open_dataset(path, decode_times=False)
+
     def check_variable(self, path: str, varname: str) -> ValidationCheck:
         """Check if variable exists in NetCDF file."""
         try:
@@ -155,7 +166,7 @@ class LocalNetCDFValidator:
             )
 
         try:
-            ds = xr.open_dataset(path)
+            ds = self._open_dataset(path)
             available_vars = list(ds.data_vars)
             ds.close()
 
@@ -189,7 +200,7 @@ class LocalNetCDFValidator:
             )
 
         try:
-            ds = xr.open_dataset(path)
+            ds = self._open_dataset(path)
             time_dim = self._find_dim(ds, self.TIME_DIMS)
 
             if time_dim is None:
@@ -242,7 +253,7 @@ class LocalNetCDFValidator:
             )
 
         try:
-            ds = xr.open_dataset(path)
+            ds = self._open_dataset(path)
             lat_dim = self._find_dim(ds, self.LAT_DIMS)
             lon_dim = self._find_dim(ds, self.LON_DIMS)
 
@@ -500,11 +511,20 @@ class DataValidator:
 
         # Check file existence
         first_existing_path = None
-        for path in sample_paths:
-            check = self._validator.check_file_exists(path)
-            checks.append(check)
-            if check.passed and first_existing_path is None:
-                first_existing_path = path
+        if not sample_paths:
+            # No files found matching the pattern
+            base_dir = path_gen._get_base_dir()
+            pattern = f"{prefix}*{suffix}.nc"
+            checks.append(ValidationCheck(
+                "file_exists", False,
+                f"No files found matching pattern '{pattern}' in {base_dir}"
+            ))
+        else:
+            for path in sample_paths:
+                check = self._validator.check_file_exists(path)
+                checks.append(check)
+                if check.passed and first_existing_path is None:
+                    first_existing_path = path
 
         # If no files found, skip other checks
         if first_existing_path is None:

@@ -974,15 +974,9 @@ class DataSourceEditor(QDialog):
         if error:
             errors.append(error)
 
-        # Validate varname (required)
-        error = FieldValidator.required(
-            self.varname_input.text().strip(),
-            "varname",
-            "Variable name is required",
-            widget=self.varname_input
-        )
-        if error:
-            errors.append(error)
+        # Check varname - show warning if missing but allow continue
+        self._varname_missing = not self.varname_input.text().strip()
+        self._varunit_missing = not self.varunit_input.text().strip()
 
         # Grid type specific validations
         if self.radio_grid.isChecked():
@@ -1096,6 +1090,27 @@ class DataSourceEditor(QDialog):
                         )
                         manager.show_error_and_focus(error)
                         return
+
+        # Show warning if varname or varunit is missing
+        if self._varname_missing or self._varunit_missing:
+            missing_items = []
+            if self._varname_missing:
+                missing_items.append("Variable Name")
+            if self._varunit_missing:
+                missing_items.append("Variable Unit")
+
+            reply = QMessageBox.warning(
+                self,
+                "Missing Variable Information",
+                f"{', '.join(missing_items)} not set.\n\n"
+                f"Please confirm the variable name and unit are defined "
+                f"in the filter configuration (e.g., CoLM_filter.py).\n\n"
+                f"Click 'Yes' to continue, 'No' to go back and edit.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
 
         super().accept()
 

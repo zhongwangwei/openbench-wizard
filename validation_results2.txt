@@ -1,0 +1,23 @@
+Data Validation Results
+==================================================
+
+Passed: 3
+Failed: 3
+
+Evapotranspiration / GLEAM4.2a_monthly: ✗ Failed
+  - File not found: /Users/zhongwangwei/Desktop/Github/openbench-wizard/dataset/Reference/Initial_test/GLEAM4.2a_monthly/E_2004_GLEAM_v4.2a_MO.nc
+  - File not found: /Users/zhongwangwei/Desktop/Github/openbench-wizard/dataset/Reference/Initial_test/GLEAM4.2a_monthly/E_2004_GLEAM_v4.2a_MO.nc
+  - File not found: /Users/zhongwangwei/Desktop/Github/openbench-wizard/dataset/Reference/Initial_test/GLEAM4.2a_monthly/E_2005_GLEAM_v4.2a_MO.nc
+
+Evapotranspiration / GLEAM_hybrid_PLUMBER2: ✓ Passed
+
+Latent_Heat / ILAMB_monthly: ✗ Failed
+  - File not found: /Users/zhongwangwei/Desktop/Github/openbench-wizard/dataset/Reference/Initial_test/ILAMB/Latent_Heat/FLUXCOM/le.nc
+
+Latent_Heat / PLUMBER2: ✓ Passed
+
+Sensible_Heat / ILAMB_monthly: ✗ Failed
+  - File not found: /Users/zhongwangwei/Desktop/Github/openbench-wizard/dataset/Reference/Initial_test/ILAMB/Sensible_Heat/FLUXCOM/sh.nc
+
+Sensible_Heat / PLUMBER2: ✓ Passed
+

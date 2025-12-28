@@ -1,52 +1,52 @@
-# OpenBench NML Wizard 技术手册
+# OpenBench NML Wizard Technical Manual
 
-## 目录
+## Table of Contents
 
-1. [概述](#1-概述)
-2. [系统架构](#2-系统架构)
-3. [目录结构](#3-目录结构)
-4. [核心模块](#4-核心模块)
-5. [UI组件](#5-ui组件)
-6. [页面说明](#6-页面说明)
-7. [配置管理](#7-配置管理)
-8. [运行与监控](#8-运行与监控)
-9. [主题与样式](#9-主题与样式)
-10. [构建与打包](#10-构建与打包)
-11. [服务器部署与远程使用](#11-服务器部署与远程使用)
-12. [开发指南](#12-开发指南)
-13. [常见问题](#13-常见问题)
-
----
-
-## 1. 概述
-
-### 1.1 简介
-
-OpenBench NML Wizard 是一个基于 PySide6 开发的桌面向导应用程序，用于生成 OpenBench 评估系统所需的 NML (Namelist) 配置文件。该应用提供了直观的图形界面，帮助用户配置评估参数、选择评估指标、设置数据源，并最终生成可用于 OpenBench 评估的 YAML 配置文件。
-
-### 1.2 主要功能
-
-- **向导式配置流程**: 分步骤引导用户完成配置
-- **多类别评估项选择**: 支持碳循环、水循环、能量循环等多个类别
-- **灵活的数据源配置**: 支持参考数据和模拟数据的配置
-- **实时配置预览**: YAML 格式预览，支持语法高亮
-- **评估任务运行**: 集成 OpenBench 运行功能
-- **进度监控**: 实时显示评估进度和资源使用情况
-
-### 1.3 技术栈
-
-| 组件 | 技术 |
-|------|------|
-| GUI框架 | PySide6 (Qt 6) |
-| 配置格式 | YAML |
-| 打包工具 | PyInstaller |
-| Python版本 | >= 3.10 |
+1. [Overview](#1-overview)
+2. [System Architecture](#2-system-architecture)
+3. [Directory Structure](#3-directory-structure)
+4. [Core Modules](#4-core-modules)
+5. [UI Components](#5-ui-components)
+6. [Page Descriptions](#6-page-descriptions)
+7. [Configuration Management](#7-configuration-management)
+8. [Running and Monitoring](#8-running-and-monitoring)
+9. [Themes and Styles](#9-themes-and-styles)
+10. [Building and Packaging](#10-building-and-packaging)
+11. [Server Deployment and Remote Usage](#11-server-deployment-and-remote-usage)
+12. [Development Guide](#12-development-guide)
+13. [FAQ](#13-faq)
 
 ---
 
-## 2. 系统架构
+## 1. Overview
 
-### 2.1 整体架构图
+### 1.1 Introduction
+
+OpenBench NML Wizard is a desktop wizard application developed using PySide6, designed to generate NML (Namelist) configuration files required by the OpenBench evaluation system. This application provides an intuitive graphical interface to help users configure evaluation parameters, select evaluation metrics, set data sources, and ultimately generate YAML configuration files suitable for OpenBench evaluation.
+
+### 1.2 Main Features
+
+- **Wizard-style configuration flow**: Step-by-step guidance through configuration
+- **Multi-category evaluation item selection**: Supports carbon cycle, water cycle, energy cycle, and more
+- **Flexible data source configuration**: Supports reference and simulation data configuration
+- **Real-time configuration preview**: YAML format preview with syntax highlighting
+- **Evaluation task execution**: Integrated OpenBench run functionality
+- **Progress monitoring**: Real-time display of evaluation progress and resource usage
+
+### 1.3 Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| GUI Framework | PySide6 (Qt 6) |
+| Configuration Format | YAML |
+| Packaging Tool | PyInstaller |
+| Python Version | >= 3.10 |
+
+---
+
+## 2. System Architecture
+
+### 2.1 Overall Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -54,7 +54,7 @@ OpenBench NML Wizard 是一个基于 PySide6 开发的桌面向导应用程序�
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │   main.py   │  │  MainWindow │  │  WizardController   │  │
-│  │  (入口点)    │──▶│  (主窗口)   │──▶│  (流程控制器)       │  │
+│  │ (Entry Point)│──▶│  (Main Win) │──▶│  (Flow Controller)  │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
 ├─────────────────────────────────────────────────────────────┤
 │                         UI Layer                             │
@@ -79,146 +79,146 @@ OpenBench NML Wizard 是一个基于 PySide6 开发的桌面向导应用程序�
 │                        Core Layer                            │
 │  ┌─────────────────────┐  ┌─────────────────────────────┐   │
 │  │   ConfigManager     │  │    EvaluationRunner         │   │
-│  │  (配置生成与管理)    │  │    (评估任务执行)           │   │
+│  │ (Config generation) │  │   (Task execution)          │   │
 │  └─────────────────────┘  └─────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 数据流
+### 2.2 Data Flow
 
 ```
-用户输入 ──▶ Pages ──▶ WizardController ──▶ ConfigManager ──▶ YAML文件
-                              │
-                              ▼
-                      EvaluationRunner ──▶ OpenBench
+User Input ──▶ Pages ──▶ WizardController ──▶ ConfigManager ──▶ YAML Files
+                               │
+                               ▼
+                       EvaluationRunner ──▶ OpenBench
 ```
 
-### 2.3 信号与槽机制
+### 2.3 Signal and Slot Mechanism
 
-应用广泛使用 Qt 的信号与槽机制进行组件间通信：
+The application extensively uses Qt's signal and slot mechanism for inter-component communication:
 
-| 信号源 | 信号名 | 接收者 | 说明 |
-|--------|--------|--------|------|
-| WizardController | page_changed | MainWindow | 页面切换通知 |
-| WizardController | config_updated | Pages | 配置更新通知 |
-| EvaluationRunner | progress_updated | ProgressDashboard | 进度更新 |
-| EvaluationRunner | log_message | ProgressDashboard | 日志消息 |
-| CheckboxGroup | selection_changed | Pages | 选择变更 |
+| Signal Source | Signal Name | Receiver | Description |
+|---------------|-------------|----------|-------------|
+| WizardController | page_changed | MainWindow | Page switch notification |
+| WizardController | config_updated | Pages | Configuration update notification |
+| EvaluationRunner | progress_updated | ProgressDashboard | Progress update |
+| EvaluationRunner | log_message | ProgressDashboard | Log message |
+| CheckboxGroup | selection_changed | Pages | Selection change |
 
 ---
 
-## 3. 目录结构
+## 3. Directory Structure
 
 ```
 openbench_wizard/
-├── main.py                    # 应用入口
-├── build.py                   # 打包脚本
-├── pyproject.toml             # 项目配置
-├── requirements.txt           # 依赖列表
-├── .gitignore                 # Git忽略配置
+├── main.py                    # Application entry
+├── build.py                   # Packaging script
+├── pyproject.toml             # Project configuration
+├── requirements.txt           # Dependencies list
+├── .gitignore                 # Git ignore configuration
 │
-├── core/                      # 核心模块
+├── core/                      # Core modules
 │   ├── __init__.py
-│   ├── config_manager.py      # 配置管理器
-│   └── runner.py              # 评估运行器
+│   ├── config_manager.py      # Configuration manager
+│   └── runner.py              # Evaluation runner
 │
-├── ui/                        # UI模块
+├── ui/                        # UI modules
 │   ├── __init__.py
-│   ├── main_window.py         # 主窗口
-│   ├── wizard_controller.py   # 向导控制器
+│   ├── main_window.py         # Main window
+│   ├── wizard_controller.py   # Wizard controller
 │   │
-│   ├── pages/                 # 页面组件
+│   ├── pages/                 # Page components
 │   │   ├── __init__.py
-│   │   ├── base_page.py       # 基础页面类
-│   │   ├── page_general.py    # 通用设置页
-│   │   ├── page_evaluation.py # 评估项选择页
-│   │   ├── page_metrics.py    # 指标选择页
-│   │   ├── page_scores.py     # 评分选择页
-│   │   ├── page_comparisons.py# 比较项选择页
-│   │   ├── page_statistics.py # 统计项选择页
-│   │   ├── page_ref_data.py   # 参考数据页
-│   │   ├── page_sim_data.py   # 模拟数据页
-│   │   ├── page_preview.py    # 预览导出页
-│   │   └── page_run_monitor.py# 运行监控页
+│   │   ├── base_page.py       # Base page class
+│   │   ├── page_general.py    # General settings page
+│   │   ├── page_evaluation.py # Evaluation items page
+│   │   ├── page_metrics.py    # Metrics selection page
+│   │   ├── page_scores.py     # Scores selection page
+│   │   ├── page_comparisons.py# Comparisons page
+│   │   ├── page_statistics.py # Statistics page
+│   │   ├── page_ref_data.py   # Reference data page
+│   │   ├── page_sim_data.py   # Simulation data page
+│   │   ├── page_preview.py    # Preview export page
+│   │   └── page_run_monitor.py# Run monitor page
 │   │
-│   ├── widgets/               # 自定义组件
+│   ├── widgets/               # Custom widgets
 │   │   ├── __init__.py
-│   │   ├── path_selector.py   # 路径选择器
-│   │   ├── checkbox_group.py  # 复选框组
-│   │   ├── yaml_preview.py    # YAML预览
-│   │   ├── progress_dashboard.py # 进度仪表板
-│   │   └── data_source_editor.py # 数据源编辑器
+│   │   ├── path_selector.py   # Path selector
+│   │   ├── checkbox_group.py  # Checkbox group
+│   │   ├── yaml_preview.py    # YAML preview
+│   │   ├── progress_dashboard.py # Progress dashboard
+│   │   └── data_source_editor.py # Data source editor
 │   │
-│   └── styles/                # 样式文件
-│       ├── theme.qss          # 主题样式表
-│       ├── checkmark.png      # 复选标记图标
-│       └── checkmark.svg      # 复选标记矢量图
+│   └── styles/                # Style files
+│       ├── theme.qss          # Theme stylesheet
+│       ├── checkmark.png      # Checkmark icon
+│       └── checkmark.svg      # Checkmark vector
 │
-├── resources/                 # 资源文件
-│   ├── icons/                 # 图标
-│   └── templates/             # 模板
+├── resources/                 # Resource files
+│   ├── icons/                 # Icons
+│   └── templates/             # Templates
 │
-└── docs/                      # 文档
-    └── technical_manual.md    # 技术手册
+└── docs/                      # Documentation
+    └── technical_manual.md    # Technical manual
 ```
 
 ---
 
-## 4. 核心模块
+## 4. Core Modules
 
 ### 4.1 ConfigManager (config_manager.py)
 
-配置管理器负责管理评估配置数据并生成 YAML 配置文件。
+The configuration manager is responsible for managing evaluation configuration data and generating YAML configuration files.
 
-#### 类定义
+#### Class Definition
 
 ```python
 class ConfigManager:
-    """管理评估配置并生成NML配置文件"""
+    """Manage evaluation configuration and generate NML config files"""
 
     def __init__(self):
         self._config: Dict[str, Any] = {}
 ```
 
-#### 主要方法
+#### Main Methods
 
-| 方法 | 参数 | 返回值 | 说明 |
-|------|------|--------|------|
-| `get(key, default)` | key: str, default: Any | Any | 获取配置值 |
-| `set(key, value)` | key: str, value: Any | None | 设置配置值 |
-| `update_section(section, data)` | section: str, data: dict | None | 更新配置节 |
-| `generate_main_nml()` | - | str | 生成主配置YAML |
-| `generate_ref_nml()` | - | str | 生成参考数据YAML |
-| `generate_sim_nml()` | - | str | 生成模拟数据YAML |
-| `validate()` | - | Tuple[bool, List[str]] | 验证配置完整性 |
-| `save_to_yaml(path)` | path: str | None | 保存配置到文件 |
-| `load_from_yaml(path)` | path: str | None | 从文件加载配置 |
+| Method | Parameters | Return Value | Description |
+|--------|------------|--------------|-------------|
+| `get(key, default)` | key: str, default: Any | Any | Get configuration value |
+| `set(key, value)` | key: str, value: Any | None | Set configuration value |
+| `update_section(section, data)` | section: str, data: dict | None | Update configuration section |
+| `generate_main_nml()` | - | str | Generate main configuration YAML |
+| `generate_ref_nml()` | - | str | Generate reference data YAML |
+| `generate_sim_nml()` | - | str | Generate simulation data YAML |
+| `validate()` | - | Tuple[bool, List[str]] | Validate configuration completeness |
+| `save_to_yaml(path)` | path: str | None | Save configuration to file |
+| `load_from_yaml(path)` | path: str | None | Load configuration from file |
 
-#### 配置结构
+#### Configuration Structure
 
 ```python
 {
     "general": {
-        "casename": str,          # 案例名称
-        "basedir": str,           # 基础目录
-        "start_year": int,        # 起始年份
-        "end_year": int,          # 结束年份
-        "min_lat": float,         # 最小纬度
-        "max_lat": float,         # 最大纬度
-        "min_lon": float,         # 最小经度
-        "max_lon": float,         # 最大经度
-        "comparison": bool,       # 启用比较
-        "statistics": bool,       # 启用统计
+        "casename": str,          # Case name
+        "basedir": str,           # Base directory
+        "start_year": int,        # Start year
+        "end_year": int,          # End year
+        "min_lat": float,         # Minimum latitude
+        "max_lat": float,         # Maximum latitude
+        "min_lon": float,         # Minimum longitude
+        "max_lon": float,         # Maximum longitude
+        "comparison": bool,       # Enable comparison
+        "statistics": bool,       # Enable statistics
     },
     "evaluation_items": {
         "Biomass": bool,
         "Gross_Primary_Productivity": bool,
-        # ... 其他评估项
+        # ... other evaluation items
     },
     "metrics": {
         "RMSE": bool,
         "Correlation": bool,
-        # ... 其他指标
+        # ... other metrics
     },
     "scores": {...},
     "comparisons": {...},
@@ -228,7 +228,7 @@ class ConfigManager:
             "dir": str,
             "suffix": str,
             "varname": str,
-            # ... 其他参数
+            # ... other parameters
         }
     },
     "sim_data": {...}
@@ -237,9 +237,9 @@ class ConfigManager:
 
 ### 4.2 EvaluationRunner (runner.py)
 
-评估运行器负责在后台线程中执行 OpenBench 评估任务。
+The evaluation runner is responsible for executing OpenBench evaluation tasks in a background thread.
 
-#### 类定义
+#### Class Definition
 
 ```python
 class RunnerStatus(Enum):
@@ -258,28 +258,28 @@ class RunnerProgress:
     eta_seconds: Optional[int]
 
 class EvaluationRunner(QThread):
-    """在后台线程运行OpenBench评估"""
+    """Run OpenBench evaluation in background thread"""
 
-    # 信号
+    # Signals
     progress_updated = Signal(RunnerProgress)
     log_message = Signal(str)
     finished_signal = Signal(RunnerStatus, str)
 ```
 
-#### 主要方法
+#### Main Methods
 
-| 方法 | 说明 |
-|------|------|
-| `run()` | 线程主函数，执行评估 |
-| `stop()` | 停止评估 |
+| Method | Description |
+|--------|-------------|
+| `run()` | Thread main function, execute evaluation |
+| `stop()` | Stop evaluation |
 
 ---
 
-## 5. UI组件
+## 5. UI Components
 
 ### 5.1 PathSelector (path_selector.py)
 
-路径选择组件，支持文件或目录选择，带拖放功能。
+Path selection component, supports file or directory selection with drag-and-drop functionality.
 
 ```python
 class PathSelector(QWidget):
@@ -287,21 +287,21 @@ class PathSelector(QWidget):
 
     def __init__(
         self,
-        mode: str = "directory",  # "directory" 或 "file"
-        filter: str = "",          # 文件过滤器
-        placeholder: str = "",     # 占位符文本
+        mode: str = "directory",  # "directory" or "file"
+        filter: str = "",          # File filter
+        placeholder: str = "",     # Placeholder text
         parent=None
     )
 ```
 
-**特性:**
-- 支持拖放文件/文件夹
-- 路径有效性实时验证
-- 自动记住上次浏览目录
+**Features:**
+- Supports drag-and-drop files/folders
+- Real-time path validity validation
+- Automatically remembers last browsed directory
 
 ### 5.2 CheckboxGroup (checkbox_group.py)
 
-分组复选框组件，支持搜索和批量选择。
+Grouped checkbox component with search and batch selection support.
 
 ```python
 class CheckboxGroup(QWidget):
@@ -309,43 +309,43 @@ class CheckboxGroup(QWidget):
 
     def __init__(
         self,
-        items: Dict[str, List[str]],  # {组名: [项目列表]}
+        items: Dict[str, List[str]],  # {group_name: [item_list]}
         parent=None
     )
 ```
 
-**特性:**
-- 分组显示（3列网格布局）
-- 实时搜索过滤
-- 全选/全不选按钮
-- 选择计数显示
-- 绿色复选标记样式
+**Features:**
+- Grouped display (3-column grid layout)
+- Real-time search filtering
+- Select all/deselect all buttons
+- Selection count display
+- Green checkmark style
 
 ### 5.3 YamlPreview (yaml_preview.py)
 
-YAML 预览组件，带语法高亮。
+YAML preview component with syntax highlighting.
 
 ```python
 class YamlHighlighter(QSyntaxHighlighter):
-    """YAML语法高亮器"""
+    """YAML syntax highlighter"""
 
 class YamlPreview(QWidget):
     def set_content(self, content: str)
     def get_content(self) -> str
 ```
 
-**语法高亮规则:**
-| 元素 | 颜色 |
-|------|------|
-| 键名 | #569cd6 (蓝色) |
-| 字符串值 | #ce9178 (橙色) |
-| 数字 | #b5cea8 (绿色) |
-| 布尔值 | #569cd6 (蓝色) |
-| 注释 | #6a9955 (绿色斜体) |
+**Syntax Highlighting Rules:**
+| Element | Color |
+|---------|-------|
+| Key names | #569cd6 (blue) |
+| String values | #ce9178 (orange) |
+| Numbers | #b5cea8 (green) |
+| Boolean values | #569cd6 (blue) |
+| Comments | #6a9955 (green italic) |
 
 ### 5.4 ProgressDashboard (progress_dashboard.py)
 
-进度仪表板，显示评估进度和系统资源。
+Progress dashboard, displays evaluation progress and system resources.
 
 ```python
 class ProgressDashboard(QWidget):
@@ -353,23 +353,23 @@ class ProgressDashboard(QWidget):
     open_output_requested = Signal()
 ```
 
-**显示内容:**
-- 总体进度条
-- 当前任务信息（变量、阶段、数据源）
-- CPU/内存使用率
-- 任务队列列表
-- 实时日志输出
+**Display Content:**
+- Overall progress bar
+- Current task info (variable, stage, data source)
+- CPU/memory usage
+- Task queue list
+- Real-time log output
 
 ### 5.5 DataSourceEditor (data_source_editor.py)
 
-数据源配置对话框。
+Data source configuration dialog.
 
 ```python
 class DataSourceEditor(QDialog):
     def __init__(
         self,
         source_name: str = "",
-        source_type: str = "ref",  # "ref" 或 "sim"
+        source_type: str = "ref",  # "ref" or "sim"
         initial_data: Optional[Dict] = None,
         parent=None
     )
@@ -377,61 +377,61 @@ class DataSourceEditor(QDialog):
     def get_data(self) -> Dict[str, Any]
 ```
 
-**配置字段:**
-- 数据路径 (dir)
-- 文件后缀 (suffix)
-- 变量名 (varname)
-- 时间信息 (syear, eyear, tim_res)
-- 空间信息 (nlon, nlat, geo_res)
-- 数据单位 (data_type)
+**Configuration Fields:**
+- Data path (dir)
+- File suffix (suffix)
+- Variable name (varname)
+- Time info (syear, eyear, tim_res)
+- Spatial info (nlon, nlat, geo_res)
+- Data units (data_type)
 
 ---
 
-## 6. 页面说明
+## 6. Page Descriptions
 
 ### 6.1 BasePage (base_page.py)
 
-所有页面的基类，定义统一的页面结构。
+Base class for all pages, defines unified page structure.
 
 ```python
 class BasePage(QWidget):
-    PAGE_ID: str = ""         # 页面标识符
-    PAGE_TITLE: str = ""      # 页面标题
-    PAGE_SUBTITLE: str = ""   # 页面副标题
+    PAGE_ID: str = ""         # Page identifier
+    PAGE_TITLE: str = ""      # Page title
+    PAGE_SUBTITLE: str = ""   # Page subtitle
 
     def _setup_content(self):
-        """子类实现：设置页面内容"""
+        """Subclass implements: setup page content"""
         raise NotImplementedError
 
     def load_from_config(self):
-        """从配置加载数据"""
+        """Load data from configuration"""
         pass
 
     def save_to_config(self):
-        """保存数据到配置"""
+        """Save data to configuration"""
         pass
 
     def validate(self) -> Tuple[bool, str]:
-        """验证页面数据"""
+        """Validate page data"""
         return True, ""
 ```
 
-### 6.2 页面列表
+### 6.2 Page List
 
-| 页面类 | PAGE_ID | 说明 | 条件显示 |
-|--------|---------|------|----------|
-| PageGeneral | general | 通用设置 | 否 |
-| PageEvaluation | evaluation_items | 评估项选择 | 否 |
-| PageMetrics | metrics | 指标选择 | 否 |
-| PageScores | scores | 评分选择 | 否 |
-| PageComparisons | comparisons | 比较项选择 | comparison=True |
-| PageStatistics | statistics | 统计项选择 | statistics=True |
-| PageRefData | ref_data | 参考数据配置 | 否 |
-| PageSimData | sim_data | 模拟数据配置 | 否 |
-| PagePreview | preview | 预览与导出 | 否 |
-| PageRunMonitor | run_monitor | 运行监控 | 否 |
+| Page Class | PAGE_ID | Description | Conditional Display |
+|------------|---------|-------------|---------------------|
+| PageGeneral | general | General settings | No |
+| PageEvaluation | evaluation_items | Evaluation items selection | No |
+| PageMetrics | metrics | Metrics selection | No |
+| PageScores | scores | Scores selection | No |
+| PageComparisons | comparisons | Comparisons selection | comparison=True |
+| PageStatistics | statistics | Statistics selection | statistics=True |
+| PageRefData | ref_data | Reference data config | No |
+| PageSimData | sim_data | Simulation data config | No |
+| PagePreview | preview | Preview and export | No |
+| PageRunMonitor | run_monitor | Run monitoring | No |
 
-### 6.3 评估项类别
+### 6.3 Evaluation Item Categories
 
 ```python
 EVALUATION_ITEMS = {
@@ -465,41 +465,41 @@ EVALUATION_ITEMS = {
 
 ---
 
-## 7. 配置管理
+## 7. Configuration Management
 
 ### 7.1 WizardController (wizard_controller.py)
 
-向导控制器管理页面流程和配置状态。
+The wizard controller manages page flow and configuration state.
 
 ```python
 class WizardController(QObject):
-    page_changed = Signal(str)           # 页面切换信号
-    config_updated = Signal(str, dict)   # 配置更新信号
-    pages_visibility_changed = Signal()  # 页面可见性变更
+    page_changed = Signal(str)           # Page switch signal
+    config_updated = Signal(str, dict)   # Configuration update signal
+    pages_visibility_changed = Signal()  # Page visibility change
 
     def __init__(self):
-        self.config = {}                 # 当前配置
-        self._pages: List[str] = []      # 页面顺序
-        self._current_index: int = 0     # 当前页面索引
-        self._conditional_pages = {      # 条件页面
+        self.config = {}                 # Current configuration
+        self._pages: List[str] = []      # Page order
+        self._current_index: int = 0     # Current page index
+        self._conditional_pages = {      # Conditional pages
             "comparisons": "comparison",
             "statistics": "statistics"
         }
 ```
 
-**主要方法:**
+**Main Methods:**
 
-| 方法 | 说明 |
-|------|------|
-| `register_pages(page_ids)` | 注册页面顺序 |
-| `goto_page(page_id)` | 跳转到指定页面 |
-| `next_page()` | 下一页 |
-| `prev_page()` | 上一页 |
-| `update_section(section, data)` | 更新配置节 |
-| `is_page_visible(page_id)` | 检查页面是否可见 |
-| `get_visible_pages()` | 获取所有可见页面 |
+| Method | Description |
+|--------|-------------|
+| `register_pages(page_ids)` | Register page order |
+| `goto_page(page_id)` | Jump to specified page |
+| `next_page()` | Next page |
+| `prev_page()` | Previous page |
+| `update_section(section, data)` | Update configuration section |
+| `is_page_visible(page_id)` | Check if page is visible |
+| `get_visible_pages()` | Get all visible pages |
 
-### 7.2 配置文件格式
+### 7.2 Configuration File Format
 
 #### main_nml.yaml
 
@@ -547,45 +547,45 @@ Gross_Primary_Productivity:
 
 ---
 
-## 8. 运行与监控
+## 8. Running and Monitoring
 
-### 8.1 运行流程
+### 8.1 Execution Flow
 
 ```
-1. 用户点击"Run"按钮
+1. User clicks "Run" button
        │
        ▼
 2. PageRunMonitor.start_evaluation()
        │
        ▼
-3. 创建 EvaluationRunner 线程
+3. Create EvaluationRunner thread
        │
        ▼
 4. runner.set_config(config_path, output_dir)
        │
        ▼
-5. runner.start() ──▶ 后台执行
+5. runner.start() ──▶ Background execution
        │
-       ├──▶ progress_updated 信号 ──▶ 更新进度条
-       ├──▶ log_message 信号 ──▶ 更新日志
+       ├──▶ progress_updated signal ──▶ Update progress bar
+       ├──▶ log_message signal ──▶ Update logs
        │
        ▼
-6. finished_signal ──▶ 显示完成状态
+6. finished_signal ──▶ Show completion status
 ```
 
-### 8.2 任务状态
+### 8.2 Task Status
 
 ```python
 class TaskStatus(Enum):
-    PENDING = "pending"      # 等待中 ○
-    RUNNING = "running"      # 运行中 ●
-    COMPLETED = "completed"  # 已完成 ✓
-    FAILED = "failed"        # 失败 ✗
+    PENDING = "pending"      # Waiting ○
+    RUNNING = "running"      # Running ●
+    COMPLETED = "completed"  # Completed ✓
+    FAILED = "failed"        # Failed ✗
 ```
 
-### 8.3 资源监控
+### 8.3 Resource Monitoring
 
-使用 `psutil` 库监控系统资源：
+Using `psutil` library to monitor system resources:
 
 ```python
 def _update_resource_usage(self):
@@ -596,12 +596,12 @@ def _update_resource_usage(self):
 
 ---
 
-## 9. 主题与样式
+## 9. Themes and Styles
 
-### 9.1 样式表结构 (theme.qss)
+### 9.1 Stylesheet Structure (theme.qss)
 
 ```css
-/* 全局样式 */
+/* Global styles */
 QWidget {
     font-family: "Segoe UI", "SF Pro Display", sans-serif;
     font-size: 14px;
@@ -609,44 +609,44 @@ QWidget {
     background-color: #f5f5f5;
 }
 
-/* 按钮样式 */
+/* Button styles */
 QPushButton {
-    background-color: #0078d4;  /* 主色调 */
+    background-color: #0078d4;  /* Primary color */
     color: white;
     border-radius: 6px;
     padding: 8px 16px;
 }
 
-/* 复选框样式 */
+/* Checkbox styles */
 QCheckBox::indicator:checked {
-    background-color: #e8f5e9;  /* 浅绿背景 */
-    border-color: #27ae60;      /* 绿色边框 */
-    image: url(CHECKMARK_PATH); /* 绿色复选标记 */
+    background-color: #e8f5e9;  /* Light green background */
+    border-color: #27ae60;      /* Green border */
+    image: url(CHECKMARK_PATH); /* Green checkmark */
 }
 
-/* 侧边栏样式 */
+/* Sidebar styles */
 QListWidget#nav_sidebar {
-    background-color: #2d2d2d;  /* 深色背景 */
+    background-color: #2d2d2d;  /* Dark background */
     min-width: 220px;
 }
 ```
 
-### 9.2 颜色方案
+### 9.2 Color Scheme
 
-| 用途 | 颜色 | 色值 |
-|------|------|------|
-| 主色调 | 蓝色 | #0078d4 |
-| 成功 | 绿色 | #27ae60 |
-| 错误 | 红色 | #e74c3c |
-| 背景 | 浅灰 | #f5f5f5 |
-| 侧边栏 | 深灰 | #2d2d2d |
-| 文字 | 深灰 | #333333 |
+| Usage | Color | Value |
+|-------|-------|-------|
+| Primary | Blue | #0078d4 |
+| Success | Green | #27ae60 |
+| Error | Red | #e74c3c |
+| Background | Light gray | #f5f5f5 |
+| Sidebar | Dark gray | #2d2d2d |
+| Text | Dark gray | #333333 |
 
 ---
 
-## 10. 构建与打包
+## 10. Building and Packaging
 
-### 10.1 依赖安装
+### 10.1 Dependency Installation
 
 ```bash
 pip install -r requirements.txt
@@ -659,33 +659,33 @@ PyYAML>=6.0
 psutil>=5.9.0
 ```
 
-### 10.2 开发运行
+### 10.2 Development Run
 
 ```bash
 cd openbench_wizard
 python main.py
 ```
 
-### 10.3 打包构建
+### 10.3 Packaging Build
 
 ```bash
 cd openbench_wizard
 python build.py
 ```
 
-**构建输出:**
+**Build Output:**
 - macOS: `dist/OpenBench-Wizard.app`
 - Windows: `dist/OpenBench-Wizard.exe`
 - Linux: `dist/OpenBench-Wizard`
 
-### 10.4 PyInstaller 配置
+### 10.4 PyInstaller Configuration
 
 ```python
 cmd = [
     sys.executable, "-m", "PyInstaller",
     "--name", "OpenBench-Wizard",
     "--windowed",
-    "--onedir",  # macOS使用onedir
+    "--onedir",  # macOS uses onedir
     "--add-data", f"{styles_dir}:ui/styles/",
     "--add-data", f"{resources_path}:resources",
     main_path
@@ -694,148 +694,148 @@ cmd = [
 
 ---
 
-## 11. 服务器部署与远程使用
+## 11. Server Deployment and Remote Usage
 
-### 11.1 运行方式概述
+### 11.1 Usage Overview
 
-OpenBench Wizard 提供两种在服务器上使用的方式：
+OpenBench Wizard provides two ways to use on servers:
 
-| 方式 | 适用场景 | 依赖 |
-|------|----------|------|
-| SSH X11 转发 | 需要完整 GUI 功能 | X11 服务器 |
-| CLI 命令行 | 无 GUI 环境 | 无额外依赖 |
+| Method | Use Case | Dependencies |
+|--------|----------|--------------|
+| SSH X11 Forwarding | Full GUI functionality needed | X11 Server |
+| CLI Command Line | No GUI environment | No extra dependencies |
 
-### 11.2 SSH X11 转发
+### 11.2 SSH X11 Forwarding
 
-#### 11.2.1 前置条件
+#### 11.2.1 Prerequisites
 
-**服务器端 (Linux):**
+**Server Side (Linux):**
 ```bash
-# 确保 sshd 配置允许 X11 转发
+# Ensure sshd configuration allows X11 forwarding
 sudo grep -q "^X11Forwarding yes" /etc/ssh/sshd_config || \
     echo "X11Forwarding yes" | sudo tee -a /etc/ssh/sshd_config
 
-# 安装必要的 X11 包
+# Install necessary X11 packages
 sudo apt-get install xauth x11-apps  # Ubuntu/Debian
 sudo yum install xorg-x11-xauth xorg-x11-apps  # CentOS/RHEL
 ```
 
-**客户端:**
-- **macOS**: 安装 XQuartz
+**Client Side:**
+- **macOS**: Install XQuartz
   ```bash
   brew install --cask xquartz
-  # 安装后需要注销并重新登录
+  # Log out and log in again after installation
   ```
-- **Windows**: 安装 VcXsrv 或 Xming
-- **Linux**: 通常已内置 X11
+- **Windows**: Install VcXsrv or Xming
+- **Linux**: Usually X11 is built-in
 
-#### 11.2.2 连接方式
+#### 11.2.2 Connection Method
 
 ```bash
-# 基本 X11 转发
+# Basic X11 forwarding
 ssh -X user@server
 
-# 可信 X11 转发 (解决某些权限问题)
+# Trusted X11 forwarding (resolves some permission issues)
 ssh -Y user@server
 
-# 启用压缩 (提高慢速网络性能)
+# Enable compression (improves slow network performance)
 ssh -XC user@server
 
-# 完整推荐命令
+# Full recommended command
 ssh -YC user@server
 ```
 
-#### 11.2.3 使用 X11 启动器
+#### 11.2.3 Using X11 Launcher
 
-应用提供了专用的 X11 启动脚本 `x11_launcher.sh`:
+The application provides a dedicated X11 launch script `x11_launcher.sh`:
 
 ```bash
-# 连接服务器后
+# After connecting to server
 cd /path/to/openbench_wizard
 
-# 检查 X11 环境
+# Check X11 environment
 ./x11_launcher.sh --check
 
-# 启动 GUI 应用
+# Launch GUI application
 ./x11_launcher.sh
 
-# 如果 X11 不可用，使用 CLI 模式
+# If X11 is unavailable, use CLI mode
 ./x11_launcher.sh --cli
 ```
 
-#### 11.2.4 环境变量自动优化
+#### 11.2.4 Automatic Environment Optimization
 
-程序会自动检测 SSH 会话并设置以下优化:
+The program automatically detects SSH sessions and sets the following optimizations:
 
 ```python
-# 自动设置的环境变量
-QT_QUICK_BACKEND=software      # 使用软件渲染
-LIBGL_ALWAYS_INDIRECT=1        # 间接 OpenGL
-QT_GRAPHICSSYSTEM=native       # 原生图形系统
+# Automatically set environment variables
+QT_QUICK_BACKEND=software      # Use software rendering
+LIBGL_ALWAYS_INDIRECT=1        # Indirect OpenGL
+QT_GRAPHICSSYSTEM=native       # Native graphics system
 ```
 
-#### 11.2.5 常见问题排查
+#### 11.2.5 Common Troubleshooting
 
-**问题: "cannot open display"**
+**Issue: "cannot open display"**
 ```bash
-# 检查 DISPLAY 变量
+# Check DISPLAY variable
 echo $DISPLAY
 
-# 应该显示类似 localhost:10.0
+# Should show something like localhost:10.0
 
-# 如果为空，检查 SSH 连接
-ssh -v -X user@server  # 查看详细连接日志
+# If empty, check SSH connection
+ssh -v -X user@server  # View detailed connection log
 ```
 
-**问题: 图形显示非常慢**
+**Issue: Graphics display is very slow**
 ```bash
-# 使用压缩
+# Use compression
 ssh -XC user@server
 
-# 或设置环境变量
+# Or set environment variables
 export QT_QUICK_BACKEND=software
 export LIBGL_ALWAYS_INDIRECT=1
 ```
 
-**问题: "Invalid MIT-MAGIC-COOKIE-1 key"**
+**Issue: "Invalid MIT-MAGIC-COOKIE-1 key"**
 ```bash
-# 重新生成 xauth
+# Regenerate xauth
 xauth generate :0 . trusted
 ```
 
-### 11.3 CLI 命令行模式
+### 11.3 CLI Command Line Mode
 
-对于无法使用 X11 的环境，提供完整的命令行界面:
+For environments where X11 cannot be used, a complete command line interface is provided:
 
-#### 11.3.1 交互式模式
+#### 11.3.1 Interactive Mode
 
 ```bash
 python cli.py --interactive
-# 或
+# or
 python cli.py -i
 ```
 
-按照提示逐步配置：
-1. 输入通用设置（案例名、输出目录、时间范围等）
-2. 选择评估项目
-3. 选择评估指标
-4. 配置参考数据和模拟数据
-5. 生成配置文件
+Follow the prompts step by step:
+1. Enter general settings (case name, output directory, time range, etc.)
+2. Select evaluation items
+3. Select evaluation metrics
+4. Configure reference data and simulation data
+5. Generate configuration files
 
-#### 11.3.2 配置文件模式
+#### 11.3.2 Configuration File Mode
 
 ```bash
-# 生成配置模板
+# Generate configuration template
 python cli.py --template my_config.yaml
 
-# 编辑模板后生成 NML
+# Generate NML after editing template
 python cli.py --config my_config.yaml
 
-# 指定输出目录
+# Specify output directory
 python cli.py --config my_config.yaml --output /path/to/output
 ```
 
-#### 11.3.3 配置模板示例
+#### 11.3.3 Configuration Template Example
 
 ```yaml
 # wizard_config_template.yaml
@@ -892,11 +892,11 @@ sim_data:
     data_type: flux
 ```
 
-### 11.4 批处理脚本示例
+### 11.4 Batch Script Example
 
 ```bash
 #!/bin/bash
-# batch_generate.sh - 批量生成多个配置
+# batch_generate.sh - Batch generate multiple configurations
 
 CONFIGS=("config1.yaml" "config2.yaml" "config3.yaml")
 OUTPUT_BASE="/path/to/outputs"
@@ -910,11 +910,11 @@ done
 
 ---
 
-## 12. 开发指南
+## 12. Development Guide
 
-### 12.1 添加新页面
+### 12.1 Adding New Pages
 
-1. 在 `ui/pages/` 创建新页面文件:
+1. Create new page file in `ui/pages/`:
 
 ```python
 # page_new_feature.py
@@ -926,71 +926,71 @@ class PageNewFeature(BasePage):
     PAGE_SUBTITLE = "Configure new feature options"
 
     def _setup_content(self):
-        # 添加UI组件到 self.content_layout
+        # Add UI components to self.content_layout
         pass
 
     def load_from_config(self):
         data = self.controller.config.get("new_feature", {})
-        # 加载数据到UI
+        # Load data to UI
 
     def save_to_config(self):
-        data = {...}  # 从UI收集数据
+        data = {...}  # Collect data from UI
         self.controller.update_section("new_feature", data)
 ```
 
-2. 在 `ui/pages/__init__.py` 注册:
+2. Register in `ui/pages/__init__.py`:
 
 ```python
 from ui.pages.page_new_feature import PageNewFeature
 ```
 
-3. 在 `ui/main_window.py` 添加页面:
+3. Add page in `ui/main_window.py`:
 
 ```python
 self.pages["new_feature"] = PageNewFeature(self.controller)
 ```
 
-### 12.2 添加新组件
+### 12.2 Adding New Components
 
-1. 在 `ui/widgets/` 创建组件文件
-2. 在 `ui/widgets/__init__.py` 导出
-3. 在页面中使用
+1. Create component file in `ui/widgets/`
+2. Export in `ui/widgets/__init__.py`
+3. Use in pages
 
-### 12.3 修改样式
+### 12.3 Modifying Styles
 
-编辑 `ui/styles/theme.qss`，使用 Qt 样式表语法。
+Edit `ui/styles/theme.qss`, using Qt stylesheet syntax.
 
-### 12.4 代码规范
+### 12.4 Code Standards
 
-- 使用绝对导入 (`from ui.widgets import ...`)
-- 遵循 PEP 8 风格
-- 添加类型注解
-- 编写文档字符串
+- Use absolute imports (`from ui.widgets import ...`)
+- Follow PEP 8 style
+- Add type annotations
+- Write docstrings
 
 ---
 
-## 13. 常见问题
+## 13. FAQ
 
-### Q1: 应用无法启动
+### Q1: Application won't start
 
-**可能原因:**
-- PySide6 未正确安装
-- 导入路径错误
+**Possible causes:**
+- PySide6 not properly installed
+- Import path errors
 
-**解决方案:**
+**Solution:**
 ```bash
 pip install --upgrade PySide6
 python -c "from PySide6.QtWidgets import QApplication; print('OK')"
 ```
 
-### Q2: PyInstaller 构建失败
+### Q2: PyInstaller build fails
 
-**可能原因:**
-- conda 环境元数据损坏
+**Possible causes:**
+- Corrupt conda environment metadata
 
-**解决方案:**
+**Solution:**
 ```python
-# 修复 conda-meta 中缺少 depends 字段的包
+# Fix packages missing 'depends' field in conda-meta
 import json
 files = ["path/to/broken/package.json"]
 for f in files:
@@ -1002,13 +1002,13 @@ for f in files:
             json.dump(data, fp, indent=4)
 ```
 
-### Q3: 复选框样式不显示
+### Q3: Checkbox style not displaying
 
-**可能原因:**
-- 图像路径未正确替换
+**Possible causes:**
+- Image path not correctly replaced
 
-**解决方案:**
-确保 `main.py` 中正确替换了 `CHECKMARK_PATH`:
+**Solution:**
+Ensure `CHECKMARK_PATH` is correctly replaced in `main.py`:
 ```python
 stylesheet = stylesheet.replace(
     "CHECKMARK_PATH",
@@ -1016,36 +1016,36 @@ stylesheet = stylesheet.replace(
 )
 ```
 
-### Q4: 打包后缺少文件
+### Q4: Files missing after packaging
 
-**解决方案:**
-在 `build.py` 中添加 `--add-data` 选项:
+**Solution:**
+Add `--add-data` option in `build.py`:
 ```python
 "--add-data", f"{missing_file_path}:destination/"
 ```
 
 ---
 
-## 附录
+## Appendix
 
-### A. 快捷键
+### A. Keyboard Shortcuts
 
-| 快捷键 | 功能 |
-|--------|------|
-| Ctrl+N | 新建配置 |
-| Ctrl+O | 打开配置 |
-| Ctrl+S | 保存配置 |
-| Ctrl+Q | 退出应用 |
+| Shortcut | Function |
+|----------|----------|
+| Ctrl+N | New configuration |
+| Ctrl+O | Open configuration |
+| Ctrl+S | Save configuration |
+| Ctrl+Q | Exit application |
 
-### B. 配置文件示例
+### B. Configuration File Examples
 
-完整的配置文件示例请参考 `resources/templates/` 目录。
+For complete configuration file examples, please refer to the `resources/templates/` directory.
 
-### C. API 参考
+### C. API Reference
 
-详细的 API 文档请使用 `pydoc` 或查看源代码注释。
+For detailed API documentation, please use `pydoc` or refer to source code comments.
 
 ---
 
-*文档版本: 1.0.0*
-*最后更新: 2025-12-17*
+*Document Version: 1.0.0*
+*Last Updated: 2025-12-28*

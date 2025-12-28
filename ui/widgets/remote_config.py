@@ -6,19 +6,323 @@ Provides UI for configuring SSH connection to remote servers,
 including authentication, compute node (multi-hop), and Python environment.
 """
 
+import logging
 import os
-from typing import Optional, Dict, Any
+import platform
+import re
+from typing import Optional, Dict, Any, List
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QLineEdit, QPushButton, QRadioButton,
     QButtonGroup, QCheckBox, QComboBox, QLabel,
-    QMessageBox, QFileDialog
+    QMessageBox, QFileDialog, QInputDialog
 )
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtWidgets import QListWidgetItem
 
 from core.ssh_manager import SSHManager, SSHConnectionError
 from core.credential_manager import CredentialManager
+
+logger = logging.getLogger(__name__)
+
+
+def parse_ssh_config() -> List[Dict[str, str]]:
+    """Parse SSH config file and return list of hosts.
+
+    Supports both Unix (~/.ssh/config) and Windows (%USERPROFILE%\\.ssh\\config).
+
+    Returns:
+        List of dicts with 'name', 'hostname', 'user', 'port', 'identity_file' keys
+    """
+    hosts = []
+
+    # Determine SSH config path based on platform
+    if platform.system() == "Windows":
+        # Windows: %USERPROFILE%\.ssh\config
+        user_profile = os.environ.get("USERPROFILE", "")
+        config_paths = [
+            os.path.join(user_profile, ".ssh", "config"),
+        ]
+    else:
+        # Unix/macOS: ~/.ssh/config
+        home = os.path.expanduser("~")
+        config_paths = [
+            os.path.join(home, ".ssh", "config"),
+        ]
+
+    for config_path in config_paths:
+        if not os.path.exists(config_path):
+            continue
+
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                current_host = None
+
+                for line in f:
+                    line = line.strip()
+
+                    # Skip comments and empty lines
+                    if not line or line.startswith('#'):
+                        continue
+
+                    # Parse key-value pairs
+                    match = re.match(r'^(\S+)\s+(.+)$', line, re.IGNORECASE)
+                    if not match:
+                        continue
+
+                    key = match.group(1).lower()
+                    value = match.group(2).strip()
+
+                    if key == 'host':
+                        # Skip wildcard hosts
+                        if '*' in value or '?' in value:
+                            current_host = None
+                            continue
+                        # New host block
+                        current_host = {
+                            'name': value,
+                            'hostname': '',
+                            'user': '',
+                            'port': '22',
+                            'identity_file': ''
+                        }
+                        hosts.append(current_host)
+                    elif current_host is not None:
+                        if key == 'hostname':
+                            current_host['hostname'] = value
+                        elif key == 'user':
+                            current_host['user'] = value
+                        elif key == 'port':
+                            current_host['port'] = value
+                        elif key == 'identityfile':
+                            # Expand ~ in path
+                            current_host['identity_file'] = os.path.expanduser(value)
+        except Exception:
+            continue
+
+    return hosts
+
+
+class ClickableLineEdit(QLineEdit):
+    """QLineEdit that emits a signal when clicked."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        """Handle mouse press event."""
+        super().mousePressEvent(event)
+        if not self.text():  # Only show menu if empty
+            self.clicked.emit()
+
+
+class RemoteFileBrowser(QWidget):
+    """Dialog for browsing files on remote server."""
+
+    file_selected = Signal(str)
+
+    def __init__(self, ssh_manager, start_path: str = "/", parent=None, select_dirs: bool = False):
+        """Initialize remote file browser.
+
+        Args:
+            ssh_manager: SSH manager for remote operations
+            start_path: Initial directory path
+            parent: Parent widget
+            select_dirs: If True, allow selecting directories instead of files
+        """
+        super().__init__(parent)
+        self._ssh_manager = ssh_manager
+        self._current_path = start_path
+        self._select_dirs = select_dirs
+        self._setup_ui()
+        self._load_directory(start_path)
+
+    def _setup_ui(self):
+        """Setup the browser UI."""
+        from PySide6.QtWidgets import (
+            QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
+            QPushButton, QLineEdit, QLabel, QDialog
+        )
+        from PySide6.QtCore import Qt
+
+        layout = QVBoxLayout(self)
+
+        # Path bar
+        path_layout = QHBoxLayout()
+        path_layout.addWidget(QLabel("Path:"))
+        self.path_input = QLineEdit()
+        self.path_input.returnPressed.connect(self._on_path_entered)
+        path_layout.addWidget(self.path_input)
+        self.btn_go = QPushButton("Go")
+        self.btn_go.clicked.connect(self._on_path_entered)
+        path_layout.addWidget(self.btn_go)
+        layout.addLayout(path_layout)
+
+        # File list
+        self.file_list = QListWidget()
+        self.file_list.itemDoubleClicked.connect(self._on_item_double_clicked)
+        layout.addWidget(self.file_list)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        self.btn_new_folder = QPushButton("New Folder")
+        self.btn_new_folder.clicked.connect(self._on_new_folder)
+        btn_layout.addWidget(self.btn_new_folder)
+        btn_layout.addStretch()
+        self.btn_select = QPushButton("Select")
+        self.btn_select.clicked.connect(self._on_select)
+        btn_layout.addWidget(self.btn_select)
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self._on_cancel)
+        btn_layout.addWidget(self.btn_cancel)
+        layout.addLayout(btn_layout)
+
+    def _load_directory(self, path: str):
+        """Load directory contents from remote server."""
+        self.file_list.clear()
+        self._current_path = path
+        self.path_input.setText(path)
+
+        try:
+            # List directory contents
+            cmd = f"ls -la {path} 2>/dev/null"
+            stdout, _, exit_code = self._ssh_manager.execute(cmd, timeout=10)
+
+            if exit_code != 0:
+                return
+
+            # Add parent directory entry
+            if path != "/":
+                item = QListWidgetItem("📁 ..")
+                item.setData(Qt.UserRole, {"name": "..", "is_dir": True})
+                self.file_list.addItem(item)
+
+            # Parse ls output
+            for line in stdout.strip().split('\n')[1:]:  # Skip total line
+                if not line.strip():
+                    continue
+                parts = line.split()
+                if len(parts) < 9:
+                    continue
+
+                perms = parts[0]
+                name = ' '.join(parts[8:])  # Handle filenames with spaces
+
+                if name in ['.', '..']:
+                    continue
+
+                is_dir = perms.startswith('d')
+                is_exec = 'x' in perms and not is_dir
+
+                if is_dir:
+                    icon = "📁"
+                elif is_exec:
+                    icon = "🐍" if 'python' in name.lower() else "⚡"
+                else:
+                    icon = "📄"
+
+                item = QListWidgetItem(f"{icon} {name}")
+                item.setData(Qt.UserRole, {"name": name, "is_dir": is_dir, "is_exec": is_exec})
+                self.file_list.addItem(item)
+
+        except Exception as e:
+            print(f"Error loading directory: {e}")
+
+    def _on_item_double_clicked(self, item):
+        """Handle double-click on item."""
+        data = item.data(Qt.UserRole)
+        if not data:
+            return
+
+        name = data["name"]
+        if data["is_dir"]:
+            # Navigate to directory
+            if name == "..":
+                new_path = os.path.dirname(self._current_path.rstrip('/'))
+                if not new_path:
+                    new_path = "/"
+            else:
+                new_path = os.path.join(self._current_path, name)
+            self._load_directory(new_path)
+        else:
+            # Select file
+            self._on_select()
+
+    def _on_path_entered(self):
+        """Handle path entered in text box."""
+        path = self.path_input.text().strip()
+        if path:
+            self._load_directory(path)
+
+    def _on_select(self):
+        """Handle select button click."""
+        item = self.file_list.currentItem()
+        if item:
+            data = item.data(Qt.UserRole)
+            if data:
+                is_dir = data["is_dir"]
+                # Allow selection based on mode
+                if self._select_dirs:
+                    # In directory mode, select directory or current path
+                    if is_dir:
+                        full_path = os.path.join(self._current_path, data["name"])
+                    else:
+                        # If file selected in dir mode, use current directory
+                        full_path = self._current_path
+                    self.file_selected.emit(full_path)
+                    self.parent().accept() if hasattr(self.parent(), 'accept') else None
+                elif not is_dir:
+                    # In file mode, only allow file selection
+                    full_path = os.path.join(self._current_path, data["name"])
+                    self.file_selected.emit(full_path)
+                    self.parent().accept() if hasattr(self.parent(), 'accept') else None
+        elif self._select_dirs:
+            # No item selected but in dir mode - select current directory
+            self.file_selected.emit(self._current_path)
+            self.parent().accept() if hasattr(self.parent(), 'accept') else None
+
+    def _on_cancel(self):
+        """Handle cancel button click."""
+        self.parent().reject() if hasattr(self.parent(), 'reject') else None
+
+    def _on_new_folder(self):
+        """Create a new folder in current directory."""
+        from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+        folder_name, ok = QInputDialog.getText(
+            self, "New Folder",
+            "Enter folder name:"
+        )
+
+        if ok and folder_name:
+            folder_name = folder_name.strip()
+            if not folder_name:
+                return
+
+            new_path = os.path.join(self._current_path, folder_name)
+            try:
+                cmd = f"mkdir -p '{new_path}'"
+                stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=10)
+
+                if exit_code == 0:
+                    # Refresh directory and navigate to new folder
+                    self._load_directory(self._current_path)
+                else:
+                    QMessageBox.warning(
+                        self, "Error",
+                        f"Failed to create folder:\n{stderr}"
+                    )
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to create folder: {e}")
+
+    def get_selected_path(self) -> str:
+        """Get the currently selected file path."""
+        item = self.file_list.currentItem()
+        if item:
+            data = item.data(Qt.UserRole)
+            if data:
+                return os.path.join(self._current_path, data["name"])
+        return ""
 
 
 class RemoteConfigWidget(QWidget):
@@ -62,19 +366,33 @@ class RemoteConfigWidget(QWidget):
         server_layout = QFormLayout(server_group)
         server_layout.setSpacing(8)
 
-        # Host input with Test button
+        # Host input with Confirm button
         host_layout = QHBoxLayout()
         host_layout.setSpacing(8)
-        self.host_input = QLineEdit()
-        self.host_input.setPlaceholderText("user@192.168.1.100")
+
+        # Load SSH config hosts
+        self._ssh_config_hosts = parse_ssh_config()
+
+        # Custom line edit that shows menu on click
+        self.host_input = ClickableLineEdit()
+        self.host_input.setPlaceholderText("Click to select or type user@host")
         self.host_input.textChanged.connect(self._on_config_changed)
+        if self._ssh_config_hosts:
+            self.host_input.clicked.connect(self._show_ssh_config_menu)
         host_layout.addWidget(self.host_input, 1)
 
-        self.btn_test = QPushButton("Test")
-        self.btn_test.setFixedWidth(60)
-        self.btn_test.setToolTip("Test SSH connection")
+        self.btn_test = QPushButton("Connect")
+        self.btn_test.setFixedWidth(70)
+        self.btn_test.setToolTip("Connect to SSH server")
         self.btn_test.clicked.connect(self._test_connection)
         host_layout.addWidget(self.btn_test)
+
+        self.btn_disconnect = QPushButton("Disconnect")
+        self.btn_disconnect.setFixedWidth(80)
+        self.btn_disconnect.setToolTip("Disconnect from SSH server")
+        self.btn_disconnect.clicked.connect(self._disconnect_server)
+        self.btn_disconnect.setEnabled(False)
+        host_layout.addWidget(self.btn_disconnect)
 
         server_layout.addRow("Host:", host_layout)
 
@@ -144,11 +462,27 @@ class RemoteConfigWidget(QWidget):
         node_layout = QFormLayout(node_group)
         node_layout.setSpacing(8)
 
-        # Node name input
+        # Node name input with Confirm button
+        node_input_layout = QHBoxLayout()
+        node_input_layout.setSpacing(8)
         self.node_input = QLineEdit()
         self.node_input.setPlaceholderText("node110")
         self.node_input.textChanged.connect(self._on_config_changed)
-        node_layout.addRow("Node:", self.node_input)
+        node_input_layout.addWidget(self.node_input, 1)
+
+        self.btn_confirm_node = QPushButton("Connect")
+        self.btn_confirm_node.setFixedWidth(70)
+        self.btn_confirm_node.setToolTip("Connect to compute node via SSH")
+        self.btn_confirm_node.clicked.connect(self._confirm_node_connection)
+        node_input_layout.addWidget(self.btn_confirm_node)
+
+        self.btn_disconnect_node = QPushButton("Disconnect")
+        self.btn_disconnect_node.setFixedWidth(80)
+        self.btn_disconnect_node.setToolTip("Disconnect from compute node")
+        self.btn_disconnect_node.clicked.connect(self._disconnect_node)
+        self.btn_disconnect_node.setEnabled(False)
+        node_input_layout.addWidget(self.btn_disconnect_node)
+        node_layout.addRow("Node:", node_input_layout)
 
         # Node authentication type
         node_auth_layout = QHBoxLayout()
@@ -157,11 +491,15 @@ class RemoteConfigWidget(QWidget):
         self.radio_node_none = QRadioButton("None (internal trust)")
         self.radio_node_none.setChecked(True)
         self.radio_node_password = QRadioButton("Password")
+        self.radio_node_key = QRadioButton("SSH Key")
         self.node_auth_group.addButton(self.radio_node_none)
         self.node_auth_group.addButton(self.radio_node_password)
+        self.node_auth_group.addButton(self.radio_node_key)
         self.radio_node_password.toggled.connect(self._on_node_auth_changed)
+        self.radio_node_key.toggled.connect(self._on_node_auth_changed)
         node_auth_layout.addWidget(self.radio_node_none)
         node_auth_layout.addWidget(self.radio_node_password)
+        node_auth_layout.addWidget(self.radio_node_key)
         node_auth_layout.addStretch()
         node_layout.addRow("Auth:", node_auth_layout)
 
@@ -173,20 +511,64 @@ class RemoteConfigWidget(QWidget):
         self.node_password_input.hide()
         node_layout.addRow("", self.node_password_input)
 
+        # Node SSH key input
+        node_key_layout = QHBoxLayout()
+        node_key_layout.setSpacing(8)
+        self.node_key_input = QLineEdit()
+        self.node_key_input.setPlaceholderText("Path to SSH key for compute node")
+        self.node_key_input.textChanged.connect(self._on_config_changed)
+        node_key_layout.addWidget(self.node_key_input, 1)
+        self.btn_browse_node_key = QPushButton("Browse")
+        self.btn_browse_node_key.setFixedWidth(60)
+        self.btn_browse_node_key.clicked.connect(self._browse_node_key)
+        node_key_layout.addWidget(self.btn_browse_node_key)
+        self.node_key_widget = QWidget()
+        self.node_key_widget.setLayout(node_key_layout)
+        self.node_key_widget.hide()
+        node_layout.addRow("", self.node_key_widget)
+
+        # Node connection status
+        self.node_status_label = QLabel("Not connected")
+        self.node_status_label.setStyleSheet("color: #999;")
+        node_layout.addRow("Status:", self.node_status_label)
+
         layout.addWidget(node_group)
+
+        # === Parallel Processing Group ===
+        parallel_group = QGroupBox("Parallel Processing")
+        parallel_layout = QFormLayout(parallel_group)
+        parallel_layout.setSpacing(8)
+
+        # Number of CPU cores
+        from PySide6.QtWidgets import QSpinBox
+        cores_layout = QHBoxLayout()
+        cores_layout.setSpacing(8)
+        self.num_cores_spin = QSpinBox()
+        self.num_cores_spin.setRange(1, 128)
+        self.num_cores_spin.setValue(4)
+        self.num_cores_spin.setToolTip("Number of CPU cores to use for parallel processing")
+        self.num_cores_spin.valueChanged.connect(self._on_config_changed)
+        cores_layout.addWidget(self.num_cores_spin)
+        self.cpu_available_label = QLabel("(Available: Connect to detect)")
+        cores_layout.addWidget(self.cpu_available_label)
+        cores_layout.addStretch()
+        parallel_layout.addRow("CPU Cores:", cores_layout)
+
+        layout.addWidget(parallel_group)
 
         # === Remote Python Environment Group ===
         env_group = QGroupBox("Remote Python Environment")
         env_layout = QFormLayout(env_group)
         env_layout.setSpacing(8)
 
-        # Python path with Detect button
+        # Python path with Detect and Browse buttons
         python_layout = QHBoxLayout()
         python_layout.setSpacing(8)
         self.python_combo = QComboBox()
         self.python_combo.setEditable(True)
         self.python_combo.setMinimumWidth(250)
         self.python_combo.currentTextChanged.connect(self._on_config_changed)
+        self.python_combo.currentTextChanged.connect(self._infer_conda_from_python)
         python_layout.addWidget(self.python_combo, 1)
 
         self.btn_detect_python = QPushButton("Detect")
@@ -194,6 +576,12 @@ class RemoteConfigWidget(QWidget):
         self.btn_detect_python.setToolTip("Detect Python interpreters on remote server")
         self.btn_detect_python.clicked.connect(self._detect_python)
         python_layout.addWidget(self.btn_detect_python)
+
+        self.btn_browse_python = QPushButton("Browse")
+        self.btn_browse_python.setFixedWidth(60)
+        self.btn_browse_python.setToolTip("Enter Python path on remote server manually")
+        self.btn_browse_python.clicked.connect(self._browse_python)
+        python_layout.addWidget(self.btn_browse_python)
 
         env_layout.addRow("Python:", python_layout)
 
@@ -211,9 +599,15 @@ class RemoteConfigWidget(QWidget):
         self.btn_refresh_conda.clicked.connect(self._refresh_conda)
         conda_layout.addWidget(self.btn_refresh_conda)
 
+        self.btn_new_conda = QPushButton("New")
+        self.btn_new_conda.setFixedWidth(50)
+        self.btn_new_conda.setToolTip("Create new OpenBench conda environment")
+        self.btn_new_conda.clicked.connect(self._create_conda_env)
+        conda_layout.addWidget(self.btn_new_conda)
+
         env_layout.addRow("Conda:", conda_layout)
 
-        # OpenBench path with Install button
+        # OpenBench path with Browse and Install buttons
         ob_layout = QHBoxLayout()
         ob_layout.setSpacing(8)
         self.openbench_input = QLineEdit()
@@ -221,8 +615,14 @@ class RemoteConfigWidget(QWidget):
         self.openbench_input.textChanged.connect(self._on_config_changed)
         ob_layout.addWidget(self.openbench_input, 1)
 
-        self.btn_install_ob = QPushButton("Install...")
-        self.btn_install_ob.setFixedWidth(70)
+        self.btn_browse_ob = QPushButton("Browse")
+        self.btn_browse_ob.setFixedWidth(60)
+        self.btn_browse_ob.setToolTip("Browse remote server for OpenBench installation path")
+        self.btn_browse_ob.clicked.connect(self._browse_openbench)
+        ob_layout.addWidget(self.btn_browse_ob)
+
+        self.btn_install_ob = QPushButton("Install")
+        self.btn_install_ob.setFixedWidth(60)
         self.btn_install_ob.setToolTip("Install OpenBench on remote server")
         self.btn_install_ob.clicked.connect(self._install_openbench)
         ob_layout.addWidget(self.btn_install_ob)
@@ -231,6 +631,70 @@ class RemoteConfigWidget(QWidget):
 
         layout.addWidget(env_group)
         layout.addStretch()
+
+    def _show_ssh_config_menu(self):
+        """Show popup menu with SSH config hosts."""
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtCore import QPoint
+
+        menu = QMenu(self)
+
+        for host in self._ssh_config_hosts:
+            name = host['name']
+            user = host.get('user', '')
+            hostname = host.get('hostname', name)
+            port = host.get('port', '22')
+
+            if user and hostname:
+                display = f"{name}  ({user}@{hostname})"
+            elif hostname:
+                display = f"{name}  ({hostname})"
+            else:
+                display = name
+
+            action = menu.addAction(display)
+            action.setData(host)
+
+        # Show menu below the input field
+        action = menu.exec_(self.host_input.mapToGlobal(
+            QPoint(0, self.host_input.height())
+        ))
+
+        if action:
+            host_data = action.data()
+            self._apply_ssh_config_host(host_data)
+
+    def _apply_ssh_config_host(self, host_data: Dict[str, str]):
+        """Apply selected SSH config host to the form.
+
+        Args:
+            host_data: Host configuration dictionary
+        """
+        user = host_data.get('user', '')
+        hostname = host_data.get('hostname', host_data['name'])
+        port = host_data.get('port', '22')
+
+        # Build host string
+        if user:
+            if port and port != '22':
+                host_str = f"{user}@{hostname}:{port}"
+            else:
+                host_str = f"{user}@{hostname}"
+        else:
+            if port and port != '22':
+                host_str = f"{hostname}:{port}"
+            else:
+                host_str = hostname
+
+        self.host_input.setText(host_str)
+
+        # Fill in identity file if specified
+        identity_file = host_data.get('identity_file', '')
+        if identity_file:
+            self.radio_key.setChecked(True)
+            self.key_input.setText(identity_file)
+
+        self._on_config_changed()
 
     def _on_auth_type_changed(self, checked: bool):
         """Handle auth type radio button change.
@@ -247,17 +711,116 @@ class RemoteConfigWidget(QWidget):
         self._on_config_changed()
 
     def _on_node_auth_changed(self, checked: bool):
-        """Handle node auth type change.
-
-        Args:
-            checked: Whether password radio is checked
-        """
-        self.node_password_input.setVisible(checked)
+        """Handle node auth type change."""
+        self.node_password_input.setVisible(self.radio_node_password.isChecked())
+        self.node_key_widget.setVisible(self.radio_node_key.isChecked())
         self._on_config_changed()
+
+    def _browse_node_key(self):
+        """Open file dialog to browse for node SSH key file."""
+        start_path = os.path.expanduser("~/.ssh")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select SSH Key for Compute Node",
+            start_path,
+            "All Files (*)"
+        )
+        if path:
+            self.node_key_input.setText(path)
+
+    def _confirm_node_connection(self):
+        """Connect to compute node via SSH."""
+        if not self._ssh_manager or not self._ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Error",
+                "Please connect to the main server first using the Confirm button above"
+            )
+            return
+
+        node_name = self.node_input.text().strip()
+        if not node_name:
+            QMessageBox.warning(self, "Error", "Please enter the compute node name")
+            return
+
+        try:
+            self.btn_confirm_node.setEnabled(False)
+            self.node_status_label.setText("Connecting...")
+            self.node_status_label.setStyleSheet("color: orange;")
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+
+            # Get authentication details
+            node_password = None
+            node_key_file = None
+            if self.radio_node_password.isChecked():
+                node_password = self.node_password_input.text()
+                if not node_password:
+                    password, ok = QInputDialog.getText(
+                        self, "Node Password",
+                        f"Enter password for {node_name}:",
+                        QLineEdit.Password
+                    )
+                    if ok and password:
+                        node_password = password
+                    else:
+                        self.node_status_label.setText("Cancelled")
+                        self.node_status_label.setStyleSheet("color: gray;")
+                        return
+            elif self.radio_node_key.isChecked():
+                node_key_file = self.node_key_input.text().strip()
+                if not node_key_file:
+                    QMessageBox.warning(self, "Error", "Please specify SSH key file for compute node")
+                    self.node_status_label.setText("No key file")
+                    self.node_status_label.setStyleSheet("color: red;")
+                    return
+
+            # Connect to compute node through jump
+            self._ssh_manager.connect_with_jump(
+                main_host=node_name,
+                main_password=node_password,
+                main_key_file=node_key_file
+            )
+
+            if self._ssh_manager.is_jump_connected:
+                self.node_status_label.setText(f"✓ Connected to {node_name}")
+                self.node_status_label.setStyleSheet("color: green; font-weight: bold;")
+                # Toggle buttons - connected
+                self.btn_confirm_node.setEnabled(False)
+                self.btn_disconnect_node.setEnabled(True)
+                # Update CPU count for compute node
+                self._update_remote_cpu_count()
+            else:
+                self.node_status_label.setText("✗ Connection failed")
+                self.node_status_label.setStyleSheet("color: red;")
+                self.btn_confirm_node.setEnabled(True)
+
+        except Exception as e:
+            self.node_status_label.setText(f"✗ {str(e)[:50]}")
+            self.node_status_label.setStyleSheet("color: red;")
+            self.btn_confirm_node.setEnabled(True)
+            QMessageBox.warning(self, "Connection Failed", str(e))
 
     def _on_config_changed(self):
         """Handle any configuration change."""
         self.config_changed.emit()
+
+    def _update_remote_cpu_count(self):
+        """Query remote server for CPU count and update label."""
+        if not self._ssh_manager or not self._ssh_manager.is_connected:
+            return
+
+        try:
+            # Query CPU count on remote server (Linux: nproc, macOS: sysctl)
+            stdout, stderr, exit_code = self._ssh_manager.execute(
+                "nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null", timeout=10
+            )
+            if exit_code == 0 and stdout.strip():
+                cpu_count = int(stdout.strip())
+                self.cpu_available_label.setText(f"(Available on remote: {cpu_count})")
+                # Update the max range
+                self.num_cores_spin.setRange(1, max(128, cpu_count))
+        except Exception:
+            self.cpu_available_label.setText("(Available: Could not detect)")
 
     def _browse_key(self):
         """Open file dialog to browse for SSH key file."""
@@ -270,6 +833,33 @@ class RemoteConfigWidget(QWidget):
         )
         if path:
             self.key_input.setText(path)
+
+    def _confirm_host_key(self, hostname: str, key_type: str, fingerprint: str) -> bool:
+        """Show dialog to confirm unknown SSH host key.
+
+        Args:
+            hostname: The remote host
+            key_type: Type of the key (e.g., ssh-ed25519)
+            fingerprint: SHA256 fingerprint of the key
+
+        Returns:
+            True if user accepts the key, False otherwise
+        """
+        msg = (
+            f"The authenticity of host '{hostname}' can't be established.\n\n"
+            f"Key type: {key_type}\n"
+            f"Fingerprint: {fingerprint}\n\n"
+            f"Are you sure you want to continue connecting?\n"
+            f"The host key will be saved for future connections."
+        )
+        reply = QMessageBox.question(
+            self,
+            "Unknown Host Key",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        return reply == QMessageBox.StandardButton.Yes
 
     def _test_connection(self):
         """Test SSH connection with current settings."""
@@ -288,7 +878,7 @@ class RemoteConfigWidget(QWidget):
         QApplication.processEvents()
 
         try:
-            self._ssh_manager = SSHManager()
+            self._ssh_manager = SSHManager(host_key_callback=self._confirm_host_key)
 
             # Connect based on auth type
             if self.radio_password.isChecked():
@@ -315,6 +905,13 @@ class RemoteConfigWidget(QWidget):
             self.status_label.setStyleSheet("color: #27ae60;")  # Green
             self.connection_status_changed.emit(True)
 
+            # Toggle buttons
+            self.btn_test.setEnabled(False)
+            self.btn_disconnect.setEnabled(True)
+
+            # Detect remote CPU count
+            self._update_remote_cpu_count()
+
             # Save credentials if requested
             if self.cb_save_password.isChecked():
                 self._save_current_credentials()
@@ -325,14 +922,59 @@ class RemoteConfigWidget(QWidget):
             self.status_label.setText("Connection failed")
             self.status_label.setStyleSheet("color: #e74c3c;")  # Red
             self.connection_status_changed.emit(False)
+            self.btn_test.setEnabled(True)
             QMessageBox.critical(self, "Connection Failed", str(e))
         except Exception as e:
             self.status_label.setText("Error")
             self.status_label.setStyleSheet("color: #e74c3c;")  # Red
             self.connection_status_changed.emit(False)
-            QMessageBox.critical(self, "Error", f"Unexpected error: {e}")
-        finally:
             self.btn_test.setEnabled(True)
+            QMessageBox.critical(self, "Error", f"Unexpected error: {e}")
+
+    def _disconnect_server(self):
+        """Disconnect from SSH server."""
+        # First disconnect compute node if connected
+        self._disconnect_node(silent=True)
+
+        # Disconnect main server
+        if self._ssh_manager:
+            try:
+                self._ssh_manager.disconnect()
+            except Exception as e:
+                logger.warning(f"Error during disconnect: {e}")
+            self._ssh_manager = None
+
+        # Update UI
+        self.status_label.setText("Not connected")
+        self.status_label.setStyleSheet("color: #999;")
+        self.btn_test.setEnabled(True)
+        self.btn_disconnect.setEnabled(False)
+        self.connection_status_changed.emit(False)
+
+    def _disconnect_node(self, silent: bool = False):
+        """Disconnect from compute node.
+
+        Args:
+            silent: If True, don't show message box
+        """
+        if not self._ssh_manager:
+            return
+
+        # Check if jump connection is active
+        if hasattr(self._ssh_manager, '_jump_client') and self._ssh_manager._jump_client:
+            try:
+                self._ssh_manager.disconnect_jump()
+            except Exception as e:
+                logger.warning(f"Error during node disconnect: {e}")
+
+        # Update UI
+        self.node_status_label.setText("Not connected")
+        self.node_status_label.setStyleSheet("color: #999;")
+        self.btn_confirm_node.setEnabled(True)
+        self.btn_disconnect_node.setEnabled(False)
+
+        if not silent:
+            logger.info("Disconnected from compute node")
 
     def _save_current_credentials(self):
         """Save current credentials using CredentialManager."""
@@ -356,12 +998,51 @@ class RemoteConfigWidget(QWidget):
         )
         self.credentials_saved.emit(host)
 
+    def _browse_python(self):
+        """Open remote file browser to select Python path."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout
+
+        if not self._ssh_manager or not self._ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Error",
+                "Please connect to server first using the Confirm button"
+            )
+            return
+
+        # Get home directory as start path
+        try:
+            home = self._ssh_manager._get_home_dir()
+        except Exception as e:
+            logger.debug("Failed to get remote home directory: %s", e)
+            home = "/"
+
+        # Create dialog with remote file browser
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Python on Remote Server")
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+        browser = RemoteFileBrowser(self._ssh_manager, home, dialog)
+        layout.addWidget(browser)
+
+        def on_file_selected(path):
+            # Add to combo if not already there
+            idx = self.python_combo.findText(path)
+            if idx < 0:
+                self.python_combo.addItem(path)
+            self.python_combo.setCurrentText(path)
+            dialog.accept()
+
+        browser.file_selected.connect(on_file_selected)
+
+        dialog.exec_()
+
     def _detect_python(self):
         """Detect Python interpreters on remote server."""
         if not self._ssh_manager or not self._ssh_manager.is_connected:
             QMessageBox.warning(
                 self, "Error",
-                "Please connect to server first using the Test button"
+                "Please connect to server first using the Confirm button"
             )
             return
 
@@ -370,20 +1051,31 @@ class RemoteConfigWidget(QWidget):
             from PySide6.QtWidgets import QApplication
             QApplication.processEvents()
 
+            # Debug: Also run which python directly and show result
+            debug_info = []
+            try:
+                stdout, _, _ = self._ssh_manager.execute("bash -i -l -c 'which python3' 2>/dev/null", timeout=15)
+                debug_info.append(f"bash -i -l python3: {stdout.strip()}")
+            except Exception as e:
+                logger.debug("Failed to detect python3 via bash: %s", e)
+            try:
+                stdout, _, _ = self._ssh_manager.execute("bash -i -l -c 'which python' 2>/dev/null", timeout=15)
+                debug_info.append(f"bash -i -l python: {stdout.strip()}")
+            except Exception as e:
+                logger.debug("Failed to detect python via bash: %s", e)
+
             pythons = self._ssh_manager.detect_python_interpreters()
             self.python_combo.clear()
             if pythons:
                 for p in pythons:
                     self.python_combo.addItem(p)
-                QMessageBox.information(
-                    self, "Detection Complete",
-                    f"Found {len(pythons)} Python interpreter(s)"
-                )
+                msg = f"Found {len(pythons)} Python interpreter(s):\n"
+                msg += "\n".join(pythons)
+                msg += "\n\nDebug info:\n" + "\n".join(debug_info)
+                QMessageBox.information(self, "Detection Complete", msg)
             else:
-                QMessageBox.information(
-                    self, "Detection Complete",
-                    "No Python interpreters found. You can enter the path manually."
-                )
+                msg = "No Python interpreters found.\n\nDebug info:\n" + "\n".join(debug_info)
+                QMessageBox.information(self, "Detection Complete", msg)
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to detect Python: {e}")
         finally:
@@ -423,13 +1115,464 @@ class RemoteConfigWidget(QWidget):
         finally:
             self.btn_refresh_conda.setEnabled(True)
 
+    def _create_conda_env(self):
+        """Create OpenBench conda environment."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QApplication
+
+        if not self._ssh_manager or not self._ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Error",
+                "Please connect to server first using the Confirm button"
+            )
+            return
+
+        env_name = "openbench"
+
+        # Check if environment already exists
+        try:
+            envs = self._ssh_manager.detect_conda_envs()
+            env_exists = any(name.lower() == env_name for name, _ in envs)
+
+            if env_exists:
+                # Create custom message box with clear options
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Environment Exists")
+                msg_box.setText(f"Conda environment '{env_name}' already exists.")
+                msg_box.setInformativeText("Please choose an action:")
+
+                btn_delete = msg_box.addButton("Delete and Recreate", QMessageBox.DestructiveRole)
+                btn_use = msg_box.addButton("Use Existing", QMessageBox.AcceptRole)
+                btn_cancel = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+
+                msg_box.exec_()
+                clicked = msg_box.clickedButton()
+
+                if clicked == btn_cancel:
+                    return
+                elif clicked == btn_use:
+                    # Use existing environment
+                    self.conda_combo.clear()
+                    self.conda_combo.addItem("(Not using conda environment)")
+                    for name, path in envs:
+                        self.conda_combo.addItem(name, path)
+                    idx = self.conda_combo.findText(env_name)
+                    if idx >= 0:
+                        self.conda_combo.setCurrentIndex(idx)
+                    QMessageBox.information(
+                        self, "Using Existing",
+                        f"Using existing '{env_name}' environment."
+                    )
+                    return
+                # else: Delete and recreate - continue below
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to check environments: {e}")
+            return
+
+        # Get Python path to find conda
+        python_path = self.python_combo.currentText().strip()
+        if not python_path:
+            QMessageBox.warning(
+                self, "Error",
+                "Please detect or select a Python interpreter first"
+            )
+            return
+
+        # Determine conda path from python path
+        import re
+        conda_match = re.search(r'(.*/(miniconda|miniforge|anaconda|mambaforge)[^/]*)/bin/python', python_path)
+        if not conda_match:
+            QMessageBox.warning(
+                self, "Error",
+                "Cannot determine conda installation from Python path.\nPlease select a conda-based Python."
+            )
+            return
+
+        conda_base = conda_match.group(1)
+        conda_exe = f"{conda_base}/bin/conda"
+
+        # Progress dialog
+        progress_dialog = QDialog(self)
+        progress_dialog.setWindowTitle("Creating Conda Environment")
+        progress_dialog.resize(600, 400)
+        progress_layout = QVBoxLayout(progress_dialog)
+
+        status_label = QLabel("Creating environment...")
+        progress_layout.addWidget(status_label)
+
+        output_text = QTextEdit()
+        output_text.setReadOnly(True)
+        output_text.setStyleSheet("font-family: monospace;")
+        progress_layout.addWidget(output_text)
+
+        close_btn = QPushButton("Close")
+        close_btn.setEnabled(False)
+        close_btn.clicked.connect(progress_dialog.accept)
+        progress_layout.addWidget(close_btn)
+
+        progress_dialog.show()
+        QApplication.processEvents()
+
+        try:
+            self.btn_new_conda.setEnabled(False)
+
+            # Delete existing if requested
+            if env_exists:
+                status_label.setText(f"Deleting existing '{env_name}' environment...")
+                QApplication.processEvents()
+                cmd = f"{conda_exe} env remove -n {env_name} -y 2>&1"
+                stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=120)
+                output_text.append(f"$ {cmd}\n{stdout}{stderr}\n")
+
+            # Create new environment with Python 3.12
+            status_label.setText(f"Creating '{env_name}' environment with Python 3.12...")
+            QApplication.processEvents()
+            cmd = f"{conda_exe} create -n {env_name} python=3.12 -y 2>&1"
+            stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=300)
+            output_text.append(f"$ {cmd}\n{stdout}{stderr}\n")
+
+            if exit_code == 0:
+                status_label.setText("✓ Environment created successfully!")
+                status_label.setStyleSheet("color: green; font-weight: bold;")
+
+                # Refresh conda environments
+                envs = self._ssh_manager.detect_conda_envs()
+                self.conda_combo.clear()
+                self.conda_combo.addItem("(Not using conda environment)")
+                for name, path in envs:
+                    self.conda_combo.addItem(name, path)
+
+                # Select the new environment
+                idx = self.conda_combo.findText(env_name)
+                if idx >= 0:
+                    self.conda_combo.setCurrentIndex(idx)
+            else:
+                status_label.setText("✗ Failed to create environment")
+                status_label.setStyleSheet("color: red; font-weight: bold;")
+
+        except Exception as e:
+            output_text.append(f"\nError: {e}")
+            status_label.setText("✗ Error occurred!")
+            status_label.setStyleSheet("color: red; font-weight: bold;")
+        finally:
+            self.btn_new_conda.setEnabled(True)
+            close_btn.setEnabled(True)
+
+        progress_dialog.exec_()
+
+    def _infer_conda_from_python(self, python_path: str):
+        """Infer and display conda environment from Python path.
+
+        Args:
+            python_path: Path to Python interpreter
+        """
+        if not python_path:
+            return
+
+        # Check if this is a conda Python path
+        # Pattern: /path/to/conda_install/bin/python -> base environment
+        # Pattern: /path/to/conda_install/envs/ENV_NAME/bin/python -> ENV_NAME environment
+
+        import re
+
+        # Check for environment path: .../envs/ENV_NAME/bin/python
+        env_match = re.search(r'/(miniconda|miniforge|anaconda|mambaforge)[^/]*/envs/([^/]+)/bin/python', python_path)
+        if env_match:
+            env_name = env_match.group(2)
+            conda_type = env_match.group(1)
+            # Update conda combo to show this environment
+            self.conda_combo.clear()
+            self.conda_combo.addItem(f"{env_name} ({conda_type} env)")
+            self.conda_combo.setCurrentIndex(0)
+            return
+
+        # Check for base environment: .../miniconda*/bin/python
+        base_match = re.search(r'/(miniconda|miniforge|anaconda|mambaforge)[^/]*/bin/python', python_path)
+        if base_match:
+            conda_type = base_match.group(1)
+            # This is the base environment
+            self.conda_combo.clear()
+            self.conda_combo.addItem(f"base ({conda_type})")
+            self.conda_combo.setCurrentIndex(0)
+            return
+
+        # Not a conda Python
+        self.conda_combo.clear()
+        self.conda_combo.addItem("(Not using conda environment)")
+        self.conda_combo.setCurrentIndex(0)
+
+    def _browse_openbench(self):
+        """Open remote file browser to select OpenBench installation path."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout
+
+        if not self._ssh_manager or not self._ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Error",
+                "Please connect to server first using the Confirm button"
+            )
+            return
+
+        # Get home directory as start path
+        try:
+            home = self._ssh_manager._get_home_dir()
+        except Exception as e:
+            logger.debug("Failed to get remote home directory: %s", e)
+            home = "/"
+
+        # Create dialog with remote file browser
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select OpenBench Directory on Remote Server")
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+        browser = RemoteFileBrowser(self._ssh_manager, home, dialog, select_dirs=True)
+        layout.addWidget(browser)
+
+        def on_file_selected(path):
+            self.openbench_input.setText(path)
+            dialog.accept()
+
+        browser.file_selected.connect(on_file_selected)
+
+        dialog.exec_()
+
     def _install_openbench(self):
-        """Open OpenBench installation dialog."""
-        # TODO: Implement installation dialog in a future task
-        QMessageBox.information(
-            self, "Coming Soon",
-            "OpenBench installation wizard will be implemented in a future update."
+        """Install OpenBench on remote server."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QTextEdit,
+            QPushButton, QLabel, QRadioButton, QButtonGroup, QApplication
         )
+        from PySide6.QtCore import QThread, Signal
+
+        if not self._ssh_manager or not self._ssh_manager.is_connected:
+            QMessageBox.warning(
+                self, "Error",
+                "Please connect to server first using the Confirm button"
+            )
+            return
+
+        # Get installation path
+        install_path = self.openbench_input.text().strip()
+        if not install_path:
+            try:
+                home = self._ssh_manager._get_home_dir()
+                install_path = f"{home}/OpenBench"
+                self.openbench_input.setText(install_path)
+            except Exception as e:
+                logger.warning("Failed to get remote home directory for install path: %s", e)
+                QMessageBox.warning(
+                    self, "Error",
+                    "Please specify an installation path for OpenBench"
+                )
+                return
+
+        # Check if git is available
+        stdout, stderr, exit_code = self._ssh_manager.execute("which git", timeout=10)
+        if exit_code != 0:
+            QMessageBox.warning(
+                self, "Error",
+                "Git is not installed on the remote server. Please install git first."
+            )
+            return
+
+        # Check if path already exists
+        is_update = False
+        stdout, stderr, exit_code = self._ssh_manager.execute(
+            f"test -d {install_path} && echo exists", timeout=10
+        )
+        if "exists" in stdout:
+            # Check if it's a git repository
+            stdout2, stderr2, exit_code2 = self._ssh_manager.execute(
+                f"test -d {install_path}/.git && echo is_git", timeout=10
+            )
+            if "is_git" in stdout2:
+                # It's a git repo, offer update
+                reply = QMessageBox.question(
+                    self, "Directory Exists",
+                    f"Directory {install_path} already exists and is a git repository.\n\nDo you want to update it with git pull?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                if reply == QMessageBox.Yes:
+                    is_update = True
+                else:
+                    return
+            else:
+                # Directory exists but not a git repo
+                reply = QMessageBox.question(
+                    self, "Directory Exists",
+                    f"Directory {install_path} already exists but is NOT a git repository.\n\nDo you want to DELETE it and install fresh?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    # Delete the directory first
+                    stdout3, stderr3, exit_code3 = self._ssh_manager.execute(
+                        f"rm -rf {install_path}", timeout=30
+                    )
+                    if exit_code3 != 0:
+                        QMessageBox.warning(
+                            self, "Error",
+                            f"Failed to delete directory:\n{stderr3}"
+                        )
+                        return
+                else:
+                    return
+
+        # Protocol selection dialog
+        if not is_update:
+            source_dialog = QDialog(self)
+            source_dialog.setWindowTitle("Select Protocol")
+            source_layout = QVBoxLayout(source_dialog)
+
+            source_layout.addWidget(QLabel("Source: GitHub (github.com/zhongwangwei/OpenBench)"))
+            source_layout.addWidget(QLabel("\nChoose protocol:"))
+
+            protocol_group = QButtonGroup(source_dialog)
+            radio_ssh = QRadioButton("SSH (git@github.com - Recommended if SSH key configured)")
+            radio_https = QRadioButton("HTTPS (https://github.com)")
+            radio_ssh.setChecked(True)
+            protocol_group.addButton(radio_ssh)
+            protocol_group.addButton(radio_https)
+            source_layout.addWidget(radio_ssh)
+            source_layout.addWidget(radio_https)
+
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+            btn_ok = QPushButton("OK")
+            btn_ok.clicked.connect(source_dialog.accept)
+            btn_cancel = QPushButton("Cancel")
+            btn_cancel.clicked.connect(source_dialog.reject)
+            btn_layout.addWidget(btn_ok)
+            btn_layout.addWidget(btn_cancel)
+            source_layout.addLayout(btn_layout)
+
+            if source_dialog.exec_() != QDialog.Accepted:
+                return
+
+            # Build repo URL based on protocol selection
+            if radio_ssh.isChecked():
+                repo_url = "git@github.com:zhongwangwei/OpenBench.git"
+            else:
+                repo_url = "https://github.com/zhongwangwei/OpenBench.git"
+        else:
+            repo_url = None  # Not needed for update
+
+        # Progress dialog
+        progress_dialog = QDialog(self)
+        progress_dialog.setWindowTitle("Installing OpenBench" if not is_update else "Updating OpenBench")
+        progress_dialog.resize(600, 400)
+        progress_layout = QVBoxLayout(progress_dialog)
+
+        status_label = QLabel("Starting..." if not is_update else "Updating...")
+        progress_layout.addWidget(status_label)
+
+        output_text = QTextEdit()
+        output_text.setReadOnly(True)
+        output_text.setStyleSheet("font-family: monospace;")
+        progress_layout.addWidget(output_text)
+
+        close_btn = QPushButton("Close")
+        close_btn.setEnabled(False)
+        close_btn.clicked.connect(progress_dialog.accept)
+        progress_layout.addWidget(close_btn)
+
+        progress_dialog.show()
+        QApplication.processEvents()
+
+        # Run installation
+        try:
+            self.btn_install_ob.setEnabled(False)
+
+            if is_update:
+                cmd = f"cd {install_path} && git pull --ff-only 2>&1"
+                status_label.setText("Running git pull...")
+            else:
+                cmd = f"git clone --progress {repo_url} {install_path} 2>&1"
+                status_label.setText(f"Cloning from {repo_url}...")
+
+            QApplication.processEvents()
+
+            # Execute and capture output
+            stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=300)
+
+            # Display output
+            output = stdout + stderr
+            output_text.setPlainText(output)
+
+            if exit_code == 0:
+                status_label.setText("✓ Clone successful! Checking dependencies...")
+                status_label.setStyleSheet("color: green;")
+                QApplication.processEvents()
+
+                # Check and install dependencies using conda
+                install_path = self.openbench_input.text().strip()
+                python_path = self.python_combo.currentText().strip()
+
+                # Determine conda path from python path
+                conda_exe = None
+                if python_path:
+                    conda_match = re.search(r'(.*/(miniconda|miniforge|anaconda|mambaforge)[^/]*)/bin/python', python_path)
+                    if conda_match:
+                        conda_base = conda_match.group(1)
+                        conda_exe = f"{conda_base}/bin/conda"
+
+                # Check if requirements.yml exists
+                req_file = f"{install_path}/requirements.yml"
+                stdout2, _, exit_code2 = self._ssh_manager.execute(
+                    f"test -f {req_file} && echo exists", timeout=10
+                )
+
+                if "exists" in stdout2 and conda_exe:
+                    output_text.append("\n\n=== Installing dependencies with conda ===\n")
+                    status_label.setText("Installing packages with conda...")
+                    QApplication.processEvents()
+
+                    # Get current conda environment name (extract from "envname (type)" format)
+                    conda_env_text = self.conda_combo.currentText()
+                    conda_env = conda_env_text.split()[0] if conda_env_text else ""
+                    if conda_env and conda_env != "(Not":
+                        # Use conda env update to install from requirements.yml
+                        conda_cmd = f"{conda_exe} env update -n {conda_env} -f {req_file} 2>&1"
+                    else:
+                        # Install in base environment
+                        conda_cmd = f"{conda_exe} env update -f {req_file} 2>&1"
+
+                    output_text.append(f"$ {conda_cmd}\n")
+                    QApplication.processEvents()
+
+                    stdout3, stderr3, exit_code3 = self._ssh_manager.execute(
+                        conda_cmd, timeout=900
+                    )
+                    output_text.append(stdout3 + stderr3)
+
+                    if exit_code3 == 0:
+                        status_label.setText("✓ Installation complete with all dependencies!")
+                        status_label.setStyleSheet("color: green; font-weight: bold;")
+                    else:
+                        status_label.setText("⚠ Clone OK but some packages failed to install")
+                        status_label.setStyleSheet("color: orange; font-weight: bold;")
+                elif "exists" not in stdout2:
+                    output_text.append("\n\nNo requirements.yml found, skipping dependency installation.")
+                    status_label.setText("✓ Installation successful!")
+                    status_label.setStyleSheet("color: green; font-weight: bold;")
+                else:
+                    output_text.append("\n\nNo conda detected, skipping dependency installation.")
+                    status_label.setText("✓ Clone successful! Configure conda to install dependencies.")
+                    status_label.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                status_label.setText("✗ Installation failed!" if not is_update else "✗ Update failed!")
+                status_label.setStyleSheet("color: red; font-weight: bold;")
+
+        except Exception as e:
+            output_text.append(f"\nError: {e}")
+            status_label.setText("✗ Error occurred!")
+            status_label.setStyleSheet("color: red; font-weight: bold;")
+        finally:
+            self.btn_install_ob.setEnabled(True)
+            close_btn.setEnabled(True)
+
+        progress_dialog.exec_()
 
     def get_ssh_manager(self) -> Optional[SSHManager]:
         """Get the current SSH manager instance.
@@ -454,8 +1597,10 @@ class RemoteConfigWidget(QWidget):
             Configuration dictionary with all settings
         """
         conda_env = ""
-        if self.conda_combo.currentIndex() > 0:
-            conda_env = self.conda_combo.currentText()
+        conda_env_text = self.conda_combo.currentText()
+        if conda_env_text and not conda_env_text.startswith("(Not"):
+            # Extract env name from "envname (type)" format
+            conda_env = conda_env_text.split()[0]
 
         return {
             "host": self.host_input.text().strip(),
@@ -464,6 +1609,7 @@ class RemoteConfigWidget(QWidget):
             "use_jump": self.node_group.isChecked(),
             "jump_node": self.node_input.text().strip(),
             "jump_auth": "password" if self.radio_node_password.isChecked() else "none",
+            "num_cores": self.num_cores_spin.value(),
             "python_path": self.python_combo.currentText().strip(),
             "conda_env": conda_env,
             "openbench_path": self.openbench_input.text().strip(),
@@ -498,6 +1644,9 @@ class RemoteConfigWidget(QWidget):
             self.radio_node_password.setChecked(True)
         else:
             self.radio_node_none.setChecked(True)
+
+        # Set num_cores
+        self.num_cores_spin.setValue(config.get("num_cores", 4))
 
         # Set Python environment
         python_path = config.get("python_path", "")

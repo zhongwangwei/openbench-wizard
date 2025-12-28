@@ -412,6 +412,8 @@ class TestEnvironmentDetectionIntegration:
         mock_transport.is_active.return_value = True
 
         # Mock command responses for environment detection
+        # Note: paths are now shell-quoted with shlex.quote()
+        # Order matters: more specific patterns must come before general patterns
         def exec_side_effect(cmd, timeout=None):
             mock_stdin = MagicMock()
             mock_stdout = MagicMock()
@@ -421,24 +423,41 @@ class TestEnvironmentDetectionIntegration:
             if "echo $HOME" in cmd:
                 mock_stdout.read.return_value = b"/home/testuser\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "which python3" in cmd:
-                mock_stdout.read.return_value = b"/usr/bin/python3\n"
+            elif "bash -i -l -c" in cmd and "which python3" in cmd:
+                # Interactive shell which python3 - returns user's conda python (not system)
+                mock_stdout.read.return_value = b"/home/testuser/miniforge3/bin/python3\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "which python" in cmd and "python3" not in cmd:
-                mock_stdout.read.return_value = b"/usr/bin/python\n"
+            elif "bash -i -l -c" in cmd and "which python" in cmd:
+                # Interactive shell which python - returns user's conda python (not system)
+                mock_stdout.read.return_value = b"/home/testuser/miniforge3/bin/python\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "miniforge3/bin/conda" in cmd and "test -f" in cmd:
-                mock_stdout.read.return_value = b"exists\n"
+            elif "ls -d" in cmd and "bin/conda" in cmd:
+                # First method: wildcard ls to find conda
+                mock_stdout.read.return_value = b"/home/testuser/miniforge3/bin/conda\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "conda env list" in cmd:
+            elif "env list" in cmd:
+                # conda env list command (now with shlex.quote)
                 mock_stdout.read.return_value = b"""# conda environments:
 #
 base                  *  /home/testuser/miniforge3
 openbench                /home/testuser/miniforge3/envs/openbench
 """
                 mock_stdout.channel.recv_exit_status.return_value = 0
-            elif "test -f" in cmd and "openbench.py" in cmd:
+            elif "openbench.py" in cmd:
+                # check_openbench_installed uses shlex.quote now
                 mock_stdout.read.return_value = b"exists\n"
+                mock_stdout.channel.recv_exit_status.return_value = 0
+            elif ".local/bin/python3" in cmd:
+                # Handle quoted path check (echo outputs without quotes)
+                mock_stdout.read.return_value = b"/home/testuser/.local/bin/python3\n"
+                mock_stdout.channel.recv_exit_status.return_value = 0
+            elif "ls -d" in cmd and ("miniforge" in cmd or "miniconda" in cmd):
+                # ls -d for finding conda pythons
+                mock_stdout.read.return_value = b"/home/testuser/miniforge3/bin/python\n"
+                mock_stdout.channel.recv_exit_status.return_value = 0
+            elif "ls " in cmd and ("miniforge" in cmd or "miniconda" in cmd):
+                # ls for finding conda pythons (Method 1b)
+                mock_stdout.read.return_value = b"/home/testuser/miniforge3/bin/python\n"
                 mock_stdout.channel.recv_exit_status.return_value = 0
             else:
                 mock_stdout.read.return_value = b""
@@ -452,10 +471,10 @@ openbench                /home/testuser/miniforge3/envs/openbench
         manager = SSHManager()
         manager.connect("testuser@host", password="pass")
 
-        # Detect Python interpreters
+        # Detect Python interpreters (code excludes system paths like /usr/bin)
         pythons = manager.detect_python_interpreters()
         assert len(pythons) >= 1
-        assert "/usr/bin/python3" in pythons
+        assert "/home/testuser/miniforge3/bin/python" in pythons
 
         # Detect conda environments
         envs = manager.detect_conda_envs()

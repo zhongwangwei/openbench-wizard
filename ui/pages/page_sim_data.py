@@ -327,6 +327,15 @@ class PageSimData(BasePage):
                         if "general" in nml_content:
                             source_data["general"] = nml_content["general"].copy()
 
+                        # Load varname from model definition file
+                        model_nml_path = nml_content.get("general", {}).get("model_namelist", "")
+                        if model_nml_path:
+                            varname = self._load_varname_from_model(
+                                model_nml_path, var_name, is_remote, ssh_manager
+                            )
+                            if varname:
+                                source_data["varname"] = varname
+
                 self._source_configs[var_name][source_name] = source_data
 
             self._update_source_list(var_name)
@@ -424,6 +433,53 @@ class PageSimData(BasePage):
 
         return full_path  # Return even if doesn't exist, let validation catch it
 
+    def _load_varname_from_model(
+        self, model_path: str, var_name: str, is_remote: bool, ssh_manager
+    ) -> str:
+        """Load varname from model definition file for a specific variable.
+
+        Args:
+            model_path: Path to model definition file
+            var_name: Variable name to look up (e.g., "Evapotranspiration")
+            is_remote: Whether in remote mode
+            ssh_manager: SSH manager for remote access
+
+        Returns:
+            Variable name from model definition, or empty string if not found
+        """
+        import os
+        import yaml
+
+        model_content = None
+
+        if is_remote and ssh_manager and ssh_manager.is_connected:
+            # Load from remote
+            remote_path = self._resolve_remote_def_nml_path(ssh_manager, model_path)
+            try:
+                stdout, stderr, exit_code = ssh_manager.execute(
+                    f"cat '{remote_path}'", timeout=30
+                )
+                if exit_code == 0 and stdout.strip():
+                    model_content = yaml.safe_load(stdout) or {}
+            except Exception as e:
+                logger.debug("Failed to load remote model file %s: %s", remote_path, e)
+        else:
+            # Load from local
+            full_path = self._resolve_def_nml_path(model_path)
+            if full_path and os.path.exists(full_path):
+                try:
+                    with open(full_path, 'r', encoding='utf-8') as f:
+                        model_content = yaml.safe_load(f) or {}
+                except Exception as e:
+                    logger.debug("Failed to load model file %s: %s", full_path, e)
+
+        if model_content and var_name in model_content:
+            var_config = model_content[var_name]
+            if isinstance(var_config, dict):
+                return var_config.get("varname", "")
+
+        return ""
+
     def save_to_config(self):
         """Save to config.
 
@@ -489,25 +545,38 @@ class PageSimData(BasePage):
 
             # Validate each source has required fields
             for source_name, source_data in sources.items():
-                # Check varname
-                varname = source_data.get("varname", "")
+                # Check varname - can be at top level, in general, or in var_config
+                general = source_data.get("general", {})
+                var_config = source_data.get("var_config", {})
+                varname = (
+                    source_data.get("varname") or
+                    var_config.get("varname") or
+                    general.get("varname") or
+                    ""
+                )
                 if not varname:
-                    error = ValidationError(
-                        field_name="varname",
-                        message=f"Variable name is required\n\nData source: {source_name}\nVariable: {var_name.replace('_', ' ')}",
-                        page_id=self.PAGE_ID,
-                        context={"var_name": var_name, "source_name": source_name}
+                    # Show warning and ask for confirmation
+                    reply = QMessageBox.warning(
+                        self,
+                        "Variable Name Missing",
+                        f"Variable name is not set for:\n\n"
+                        f"Data source: {source_name}\n"
+                        f"Variable: {var_name.replace('_', ' ')}\n\n"
+                        f"Is this variable defined in the filter configuration?\n\n"
+                        f"Click 'Yes' to continue, 'No' to edit the source.",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
                     )
-                    manager.show_error_and_focus(error)
-                    self._select_and_edit_source(var_name, source_name)
-                    return False
+                    if reply == QMessageBox.No:
+                        self._select_and_edit_source(var_name, source_name)
+                        return False
 
                 # Check prefix/suffix (only for grid data, not station data)
-                general = source_data.get("general", {})
+                # prefix/suffix can be at top level or in general section
                 data_type = general.get("data_type", "grid")
                 if data_type != "stn":
-                    prefix = source_data.get("prefix", "")
-                    suffix = source_data.get("suffix", "")
+                    prefix = source_data.get("prefix") or general.get("prefix") or ""
+                    suffix = source_data.get("suffix") or general.get("suffix") or ""
                     if not prefix and not suffix:
                         error = ValidationError(
                             field_name="prefix/suffix",

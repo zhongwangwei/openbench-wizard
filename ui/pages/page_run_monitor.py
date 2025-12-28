@@ -7,6 +7,7 @@ Supports both local and remote execution modes:
 - Remote: Uses RemoteRunner to execute OpenBench on a remote server via SSH
 """
 
+import logging
 import os
 import subprocess
 import platform
@@ -17,6 +18,8 @@ from ui.pages.base_page import BasePage
 from ui.widgets import ProgressDashboard, TaskStatus
 from core.runner import EvaluationRunner, RunnerStatus
 from core.remote_runner import RemoteRunner
+
+logger = logging.getLogger(__name__)
 
 
 class PageRunMonitor(BasePage):
@@ -175,7 +178,7 @@ class PageRunMonitor(BasePage):
                 self,
                 "Remote Configuration Missing",
                 "Remote execution is enabled but no remote server is configured.\n\n"
-                "Please configure a remote server in General Settings."
+                "Please configure a remote server in Runtime Environment."
             )
             return None
 
@@ -189,7 +192,7 @@ class PageRunMonitor(BasePage):
                 "SSH Connection Required",
                 "Remote execution requires an active SSH connection.\n\n"
                 "Please:\n"
-                "1. Go to General Settings\n"
+                "1. Go to Runtime Environment\n"
                 "2. Configure the remote server\n"
                 "3. Click 'Test' to establish the connection\n"
                 "4. Then return here and click Run again"
@@ -205,7 +208,7 @@ class PageRunMonitor(BasePage):
                 self,
                 "Remote Python Not Configured",
                 "Remote Python path is not configured.\n\n"
-                "Please configure the Python path in General Settings > Remote Python Environment."
+                "Please configure the Python path in Runtime Environment > Remote Python Environment."
             )
             return None
 
@@ -214,17 +217,18 @@ class PageRunMonitor(BasePage):
                 self,
                 "Remote OpenBench Not Configured",
                 "Remote OpenBench path is not configured.\n\n"
-                "Please configure the OpenBench path in General Settings > Remote Python Environment."
+                "Please configure the OpenBench path in Runtime Environment > Remote Python Environment."
             )
             return None
 
         # Create and return the RemoteRunner
-        return RemoteRunner(config_path, ssh_manager, remote_config, self)
+        # config_already_remote=True because page_preview already uploaded the config
+        return RemoteRunner(config_path, ssh_manager, remote_config, self, config_already_remote=True)
 
     def _get_ssh_manager(self):
-        """Get the SSH manager from the General Settings page.
+        """Get the SSH manager from the Runtime Environment page.
 
-        The SSH manager is held by the RemoteConfigWidget in the General Settings page.
+        The SSH manager is held by the RemoteConfigWidget in the Runtime Environment page.
         We access it through the controller's parent (MainWindow) which holds all pages.
 
         Returns:
@@ -242,13 +246,13 @@ class PageRunMonitor(BasePage):
             if pages is None:
                 return None
 
-            # Get the general page which contains the remote config widget
-            general_page = pages.get("general")
-            if general_page is None:
+            # Get the runtime page which contains the remote config widget
+            runtime_page = pages.get("runtime")
+            if runtime_page is None:
                 return None
 
-            # The remote config widget is a child of the general page
-            remote_config_widget = getattr(general_page, "remote_config_widget", None)
+            # The remote config widget is a child of the runtime page
+            remote_config_widget = getattr(runtime_page, "remote_config_widget", None)
             if remote_config_widget is None:
                 return None
 
@@ -350,6 +354,15 @@ class PageRunMonitor(BasePage):
         """Open output directory."""
         output_dir = self.controller.get_output_dir()
 
+        # Check if in remote mode
+        general = self.controller.config.get("general", {})
+        is_remote = general.get("execution_mode") == "remote"
+
+        if is_remote:
+            # In remote mode, open remote file browser
+            self._open_remote_output(output_dir)
+            return
+
         if os.path.exists(output_dir):
             # Cross-platform open folder with error handling
             try:
@@ -370,6 +383,177 @@ class PageRunMonitor(BasePage):
                 self,
                 "Directory Not Found",
                 f"Output directory does not exist:\n{output_dir}"
+            )
+
+    def _open_remote_output(self, output_dir: str):
+        """Open remote output directory in file browser with download option."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog
+        from ui.widgets.remote_config import RemoteFileBrowser
+
+        ssh_manager = self._get_ssh_manager()
+        if not ssh_manager or not ssh_manager.is_connected:
+            QMessageBox.warning(
+                self,
+                "Not Connected",
+                "SSH connection is not available.\n\n"
+                f"Remote output directory:\n{output_dir}"
+            )
+            return
+
+        # Check if directory exists on remote
+        stdout, stderr, exit_code = ssh_manager.execute(
+            f"test -d '{output_dir}' && echo 'exists'", timeout=10
+        )
+        if exit_code != 0 or 'exists' not in stdout:
+            QMessageBox.warning(
+                self,
+                "Directory Not Found",
+                f"Remote output directory does not exist:\n{output_dir}"
+            )
+            return
+
+        # Create dialog with remote file browser
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Remote Output Directory")
+        dialog.setMinimumSize(800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # Remote file browser
+        browser = RemoteFileBrowser(
+            ssh_manager=ssh_manager,
+            start_path=output_dir,
+            parent=dialog,
+            select_dirs=True
+        )
+        layout.addWidget(browser, 1)
+
+        # Button layout
+        btn_layout = QHBoxLayout()
+
+        # Download folder button
+        btn_download_all = QPushButton("Download Folder to Local...")
+        btn_download_all.setToolTip("Download the entire output folder to local machine")
+        btn_download_all.clicked.connect(
+            lambda: self._download_remote_folder(ssh_manager, output_dir, dialog)
+        )
+        btn_layout.addWidget(btn_download_all)
+
+        btn_layout.addStretch()
+
+        # Close button
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(dialog.accept)
+        btn_layout.addWidget(btn_close)
+
+        layout.addLayout(btn_layout)
+
+        dialog.exec()
+
+    def _download_remote_folder(self, ssh_manager, remote_dir: str, parent_dialog):
+        """Download entire remote folder to local."""
+        from PySide6.QtWidgets import QFileDialog, QProgressDialog
+        from PySide6.QtCore import Qt
+
+        # Ask user where to save
+        local_dir = QFileDialog.getExistingDirectory(
+            parent_dialog,
+            "Select Local Directory to Save Output",
+            os.path.expanduser("~"),
+            QFileDialog.ShowDirsOnly
+        )
+
+        if not local_dir:
+            return
+
+        # Get folder name from remote path
+        folder_name = os.path.basename(remote_dir.rstrip('/'))
+        local_target = os.path.join(local_dir, folder_name)
+
+        # Create progress dialog
+        progress = QProgressDialog(
+            "Downloading files from remote server...",
+            "Cancel",
+            0, 100,
+            parent_dialog
+        )
+        progress.setWindowTitle("Downloading")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        try:
+            # Get list of files to download
+            stdout, stderr, exit_code = ssh_manager.execute(
+                f"find '{remote_dir}' -type f", timeout=60
+            )
+            if exit_code != 0:
+                QMessageBox.warning(
+                    parent_dialog,
+                    "Error",
+                    f"Failed to list remote files:\n{stderr}"
+                )
+                return
+
+            files = [f.strip() for f in stdout.strip().split('\n') if f.strip()]
+            if not files:
+                QMessageBox.information(
+                    parent_dialog,
+                    "Empty Directory",
+                    "No files found in the remote directory."
+                )
+                return
+
+            total_files = len(files)
+            progress.setMaximum(total_files)
+
+            # Open SFTP connection
+            sftp = ssh_manager._client.open_sftp()
+            try:
+                for i, remote_file in enumerate(files):
+                    if progress.wasCanceled():
+                        break
+
+                    # Calculate relative path
+                    rel_path = os.path.relpath(remote_file, remote_dir)
+                    local_file = os.path.join(local_target, rel_path)
+
+                    # Create local directory if needed
+                    local_file_dir = os.path.dirname(local_file)
+                    os.makedirs(local_file_dir, exist_ok=True)
+
+                    # Download file
+                    progress.setLabelText(f"Downloading: {rel_path}")
+                    sftp.get(remote_file, local_file)
+
+                    progress.setValue(i + 1)
+
+            finally:
+                sftp.close()
+
+            if not progress.wasCanceled():
+                QMessageBox.information(
+                    parent_dialog,
+                    "Download Complete",
+                    f"Successfully downloaded {total_files} files to:\n{local_target}"
+                )
+
+                # Open the downloaded folder
+                try:
+                    if platform.system() == "Darwin":
+                        subprocess.run(["open", local_target], check=False)
+                    elif platform.system() == "Windows":
+                        os.startfile(local_target)
+                    else:
+                        subprocess.run(["xdg-open", local_target], check=False)
+                except Exception as e:
+                    logger.debug("Failed to open downloaded folder: %s", e)
+
+        except Exception as e:
+            QMessageBox.warning(
+                parent_dialog,
+                "Download Error",
+                f"Failed to download files:\n{str(e)}"
             )
 
     def load_from_config(self):

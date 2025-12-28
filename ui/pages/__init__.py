@@ -2,6 +2,7 @@
 """Pages package."""
 
 from ui.pages.base_page import BasePage
+from ui.pages.page_runtime import PageRuntime
 from ui.pages.page_general import PageGeneral
 from ui.pages.page_evaluation import PageEvaluation
 from ui.pages.page_metrics import PageMetrics
@@ -15,6 +16,7 @@ from ui.pages.page_run_monitor import PageRunMonitor
 
 __all__ = [
     "BasePage",
+    "PageRuntime",
     "PageGeneral",
     "PageEvaluation",
     "PageMetrics",

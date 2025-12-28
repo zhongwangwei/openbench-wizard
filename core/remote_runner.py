@@ -8,6 +8,7 @@ remotely using SSHManager for file transfer and command execution.
 
 import os
 import re
+import shlex
 import tempfile
 import threading
 import time
@@ -48,29 +49,34 @@ class RemoteRunner(QThread):
         config_path: str,
         ssh_manager: SSHManager,
         remote_config: Dict[str, Any],
-        parent=None
+        parent=None,
+        config_already_remote: bool = False
     ):
         """Initialize the remote runner.
 
         Args:
-            config_path: Path to the local OpenBench config file
+            config_path: Path to the OpenBench config file
+                - If config_already_remote=True, this is the remote path
+                - If config_already_remote=False, this is the local path to upload
             ssh_manager: Connected SSHManager instance
             remote_config: Remote configuration dictionary containing:
                 - python_path: Path to Python interpreter on remote server
                 - conda_env: Conda environment name (optional)
                 - openbench_path: Path to OpenBench installation on remote server
             parent: Parent QObject
+            config_already_remote: If True, config_path is already on remote server
         """
         super().__init__(parent)
         self.config_path = config_path
         self._ssh_manager = ssh_manager
         self._remote_config = remote_config
+        self._config_already_remote = config_already_remote
         self._stop_requested = False
         self._stop_lock = threading.Lock()
 
         # Remote paths
         self._remote_temp_dir = ""
-        self._remote_config_path = ""
+        self._remote_config_path = config_path if config_already_remote else ""
 
         # Progress tracking (same as EvaluationRunner)
         self._total_tasks = 0
@@ -134,32 +140,36 @@ class RemoteRunner(QThread):
                 self._handle_stop()
                 return
 
-            # Step 1: Create remote temp directory
-            self._emit_progress(
-                RunnerStatus.RUNNING, 2,
-                "Setup", "", "Creating directory",
-                "Creating remote temporary directory..."
-            )
-            self.log_message.emit("Creating remote temporary directory...")
+            # Skip upload steps if config is already on remote
+            if self._config_already_remote:
+                self.log_message.emit(f"Using remote config: {self._remote_config_path}")
+            else:
+                # Step 1: Create remote temp directory
+                self._emit_progress(
+                    RunnerStatus.RUNNING, 2,
+                    "Setup", "", "Creating directory",
+                    "Creating remote temporary directory..."
+                )
+                self.log_message.emit("Creating remote temporary directory...")
 
-            if not self._create_remote_temp_dir():
-                return
+                if not self._create_remote_temp_dir():
+                    return
 
-            # Check for stop request
-            if self._is_stop_requested():
-                self._handle_stop()
-                return
+                # Check for stop request
+                if self._is_stop_requested():
+                    self._handle_stop()
+                    return
 
-            # Step 2: Upload config file
-            self._emit_progress(
-                RunnerStatus.RUNNING, 4,
-                "Upload", "", "Uploading config",
-                "Uploading configuration file..."
-            )
-            self.log_message.emit("Uploading configuration file...")
+                # Step 2: Upload config file
+                self._emit_progress(
+                    RunnerStatus.RUNNING, 4,
+                    "Upload", "", "Uploading config",
+                    "Uploading configuration file..."
+                )
+                self.log_message.emit("Uploading configuration file...")
 
-            if not self._upload_config():
-                return
+                if not self._upload_config():
+                    return
 
             # Check for stop request
             if self._is_stop_requested():
@@ -238,8 +248,9 @@ class RemoteRunner(QThread):
             temp_name = f"openbench_wizard_{timestamp}"
             self._remote_temp_dir = f"/tmp/{temp_name}"
 
+            quoted_dir = shlex.quote(self._remote_temp_dir)
             stdout, stderr, exit_code = self._ssh_manager.execute(
-                f"mkdir -p {self._remote_temp_dir}",
+                f"mkdir -p {quoted_dir}",
                 timeout=30
             )
 
@@ -321,12 +332,20 @@ class RemoteRunner(QThread):
         # Build the OpenBench script path
         openbench_script = f"{openbench_path}/openbench/openbench.py"
 
-        # Build the command
+        # Build the command with unbuffered output for real-time logging
+        # PYTHONUNBUFFERED=1 ensures output is not buffered
         if conda_env:
-            # Activate conda environment before running
-            cmd = f"source $(conda info --base)/etc/profile.d/conda.sh && conda activate {conda_env} && cd {openbench_path} && {python_path} {openbench_script} {self._remote_config_path}"
+            # Derive conda base from python path (e.g., /path/to/miniconda3/bin/python -> /path/to/miniconda3)
+            # This works for paths like: .../miniconda3/bin/python or .../miniconda3/envs/myenv/bin/python
+            conda_base_match = re.search(r'(.*?/(?:miniconda|miniforge|anaconda|mambaforge)[^/]*)', python_path)
+            if conda_base_match:
+                conda_base = conda_base_match.group(1)
+                cmd = f"source {conda_base}/etc/profile.d/conda.sh && conda activate {conda_env} && cd {openbench_path} && PYTHONUNBUFFERED=1 {python_path} -u {openbench_script} {self._remote_config_path}"
+            else:
+                # Fallback: try using bash login shell to get conda in PATH
+                cmd = f"bash -l -c 'conda activate {conda_env} && cd {openbench_path} && PYTHONUNBUFFERED=1 {python_path} -u {openbench_script} {self._remote_config_path}'"
         else:
-            cmd = f"cd {openbench_path} && {python_path} {openbench_script} {self._remote_config_path}"
+            cmd = f"cd {openbench_path} && PYTHONUNBUFFERED=1 {python_path} -u {openbench_script} {self._remote_config_path}"
 
         self.log_message.emit(f"Executing: {cmd}")
 
@@ -397,10 +416,12 @@ class RemoteRunner(QThread):
 
     def _cleanup_remote(self):
         """Clean up the remote temporary directory."""
-        if self._remote_temp_dir:
+        # Only cleanup if we created a temp directory (not if config was already remote)
+        if self._remote_temp_dir and not self._config_already_remote:
             try:
+                quoted_dir = shlex.quote(self._remote_temp_dir)
                 self._ssh_manager.execute(
-                    f"rm -rf {self._remote_temp_dir}",
+                    f"rm -rf {quoted_dir}",
                     timeout=30
                 )
                 self.log_message.emit(f"Cleaned up remote directory: {self._remote_temp_dir}")

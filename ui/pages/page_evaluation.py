@@ -95,7 +95,7 @@ class PageEvaluation(BasePage):
         error = FieldValidator.selection_required(
             selection,
             "evaluation_items",
-            "请至少选择一个评估项目",
+            "Please select at least one evaluation item",
             page_id=self.PAGE_ID
         )
 

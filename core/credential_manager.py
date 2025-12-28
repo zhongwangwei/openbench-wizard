@@ -9,6 +9,7 @@ import os
 import json
 import hashlib
 import getpass
+import logging
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
@@ -17,11 +18,15 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import base64
 
+logger = logging.getLogger(__name__)
+
 
 class CredentialManager:
     """Manage encrypted credential storage."""
 
     CREDENTIALS_FILE = "credentials.json"
+    SALT_FILE = "encryption_salt.bin"
+    SALT_SIZE = 32  # 256 bits
 
     def __init__(self, config_dir: Optional[str] = None):
         """Initialize credential manager.
@@ -33,7 +38,52 @@ class CredentialManager:
             config_dir = os.path.join(os.path.expanduser("~"), ".openbench_wizard")
         self._config_dir = config_dir
         self._credentials_path = os.path.join(config_dir, self.CREDENTIALS_FILE)
+        self._salt_path = os.path.join(config_dir, self.SALT_FILE)
         self._fernet = self._create_fernet()
+
+    def _get_or_create_salt(self) -> bytes:
+        """Get existing salt or create a new random salt.
+
+        The salt is stored in a separate file and created once per installation.
+        This ensures each installation has a unique salt while maintaining
+        backward compatibility (existing installations keep their salt).
+
+        Returns:
+            Salt bytes (32 bytes)
+        """
+        os.makedirs(self._config_dir, exist_ok=True)
+
+        if os.path.exists(self._salt_path):
+            try:
+                with open(self._salt_path, 'rb') as f:
+                    salt = f.read()
+                if len(salt) == self.SALT_SIZE:
+                    return salt
+                else:
+                    logger.warning("Invalid salt file size, regenerating")
+            except Exception as e:
+                logger.warning(f"Failed to read salt file: {e}")
+
+        # Generate new random salt
+        salt = os.urandom(self.SALT_SIZE)
+
+        try:
+            with open(self._salt_path, 'wb') as f:
+                f.write(salt)
+            # Set restrictive permissions (Unix only)
+            try:
+                os.chmod(self._salt_path, 0o600)
+            except (OSError, AttributeError):
+                pass  # Windows doesn't support chmod
+            logger.info("Generated new encryption salt")
+        except Exception as e:
+            logger.warning(f"Failed to save salt file: {e}")
+            # Fall back to a deterministic salt based on machine ID
+            # This is less secure but ensures functionality
+            machine_id = self._get_encryption_key()
+            salt = hashlib.sha256(machine_id.encode()).digest()
+
+        return salt
 
     def _create_fernet(self) -> Fernet:
         """Create Fernet cipher using machine-specific key.
@@ -41,9 +91,9 @@ class CredentialManager:
         Returns:
             Fernet cipher instance
         """
-        # Derive key from machine identifier
+        # Derive key from machine identifier with random salt
         machine_id = self._get_encryption_key()
-        salt = b'openbench_wizard_salt'
+        salt = self._get_or_create_salt()
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,

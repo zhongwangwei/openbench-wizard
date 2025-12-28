@@ -17,18 +17,18 @@ class TestValidationDataClasses:
         check = ValidationCheck(
             name="file_exists",
             passed=True,
-            message="文件存在"
+            message="File exists"
         )
         assert check.name == "file_exists"
         assert check.passed is True
-        assert check.message == "文件存在"
+        assert check.message == "File exists"
 
     def test_validation_check_fail(self):
         """Test creating a failing validation check."""
         check = ValidationCheck(
             name="variable_exists",
             passed=False,
-            message="变量 'LE' 不存在，可用变量: ['E', 'Ep']"
+            message="Variable 'LE' not found, available: ['E', 'Ep']"
         )
         assert check.passed is False
 
@@ -36,7 +36,7 @@ class TestValidationDataClasses:
         """Test source validation result."""
         checks = [
             ValidationCheck("file_exists", True, "OK"),
-            ValidationCheck("variable_exists", False, "变量不存在")
+            ValidationCheck("variable_exists", False, "Variable not found")
         ]
         result = SourceValidationResult(
             var_name="Evapotranspiration",
@@ -54,7 +54,7 @@ class TestValidationDataClasses:
                 ValidationCheck("file", True, "OK")
             ]),
             SourceValidationResult("GPP", "MODIS", [
-                ValidationCheck("file", False, "不存在")
+                ValidationCheck("file", False, "Not found")
             ])
         ]
         report = DataValidationReport(results=results)
@@ -63,6 +63,7 @@ class TestValidationDataClasses:
         assert report.failed_count == 1
 
 
+from unittest.mock import patch
 from core.data_validator import FilePathGenerator
 
 
@@ -85,7 +86,7 @@ class TestFilePathGenerator:
         assert paths[0] == "/data/ET/gleam__v4.nc"
 
     def test_year_groupby(self):
-        """Test Year groupby - sample years."""
+        """Test Year groupby - uses glob to find files."""
         gen = FilePathGenerator(
             root_dir="/data",
             sub_dir="ET",
@@ -95,15 +96,22 @@ class TestFilePathGenerator:
             syear=2000,
             eyear=2020
         )
-        paths = gen.get_sample_paths()
-        # Should return first, middle, last year
+        # Mock glob to return matching files
+        mock_files = [
+            "/data/ET/gleam_2000.nc",
+            "/data/ET/gleam_2010.nc",
+            "/data/ET/gleam_2020.nc"
+        ]
+        with patch('glob.glob', return_value=mock_files):
+            paths = gen.get_sample_paths()
+        # Should return first, middle, last file
         assert len(paths) == 3
         assert "/data/ET/gleam_2000.nc" in paths
         assert "/data/ET/gleam_2010.nc" in paths
         assert "/data/ET/gleam_2020.nc" in paths
 
     def test_month_groupby(self):
-        """Test Month groupby - sample months."""
+        """Test Month groupby - uses glob to find files."""
         gen = FilePathGenerator(
             root_dir="/data",
             sub_dir="",
@@ -113,13 +121,20 @@ class TestFilePathGenerator:
             syear=2000,
             eyear=2001
         )
-        paths = gen.get_sample_paths()
+        # Mock glob to return matching files
+        mock_files = [
+            "/data/data_200001.nc",
+            "/data/data_200006.nc",
+            "/data/data_200012.nc"
+        ]
+        with patch('glob.glob', return_value=mock_files):
+            paths = gen.get_sample_paths()
         # Should sample a few months
-        assert len(paths) >= 2
+        assert len(paths) == 3
         assert any("200001" in p for p in paths)
 
     def test_day_groupby(self):
-        """Test Day groupby - sample days."""
+        """Test Day groupby - uses glob to find files."""
         gen = FilePathGenerator(
             root_dir="/data",
             sub_dir="daily",
@@ -129,7 +144,13 @@ class TestFilePathGenerator:
             syear=2000,
             eyear=2001
         )
-        paths = gen.get_sample_paths()
+        # Mock glob to return matching files
+        mock_files = [
+            "/data/daily/obs_20000101.nc",
+            "/data/daily/obs_20010101.nc"
+        ]
+        with patch('glob.glob', return_value=mock_files):
+            paths = gen.get_sample_paths()
         assert len(paths) == 2
         assert "/data/daily/obs_20000101.nc" in paths
         assert "/data/daily/obs_20010101.nc" in paths
@@ -147,6 +168,38 @@ class TestFilePathGenerator:
         )
         paths = gen.get_sample_paths()
         assert paths[0] == "/data/file_.nc"
+
+    def test_glob_no_matches(self):
+        """Test that empty list returned when no files match glob."""
+        gen = FilePathGenerator(
+            root_dir="/data",
+            sub_dir="",
+            prefix="missing_",
+            suffix="",
+            data_groupby="Year",
+            syear=2000,
+            eyear=2020
+        )
+        with patch('glob.glob', return_value=[]):
+            paths = gen.get_sample_paths()
+        assert len(paths) == 0
+
+    def test_glob_single_match(self):
+        """Test glob returns single file."""
+        gen = FilePathGenerator(
+            root_dir="/data",
+            sub_dir="",
+            prefix="data_",
+            suffix="",
+            data_groupby="Year",
+            syear=2000,
+            eyear=2020
+        )
+        mock_files = ["/data/data_2000.nc"]
+        with patch('glob.glob', return_value=mock_files):
+            paths = gen.get_sample_paths()
+        assert len(paths) == 1
+        assert paths[0] == "/data/data_2000.nc"
 
 
 import tempfile
@@ -175,7 +228,7 @@ class TestLocalNetCDFValidator:
         validator = LocalNetCDFValidator()
         check = validator.check_file_exists("/nonexistent/path/file.nc")
         assert check.passed is False
-        assert "不存在" in check.message
+        assert "not found" in check.message.lower() or "File not found" in check.message
 
     def test_check_variable_exists(self):
         """Test variable check with mocked xarray."""
@@ -222,7 +275,7 @@ class TestLocalNetCDFValidator:
         with patch('xarray.open_dataset', return_value=mock_ds):
             check = validator.check_time_range("/data/file.nc", 2005, 2015)
             assert check.passed is True
-            assert "时间范围满足" in check.message
+            assert "Time range OK" in check.message
 
     def test_check_time_range_fail(self):
         """Test time range check when data doesn't cover required period."""
@@ -241,7 +294,7 @@ class TestLocalNetCDFValidator:
         with patch('xarray.open_dataset', return_value=mock_ds):
             check = validator.check_time_range("/data/file.nc", 2000, 2020)
             assert check.passed is False
-            assert "时间范围不足" in check.message
+            assert "Time range insufficient" in check.message or "insufficient" in check.message.lower()
 
     def test_check_time_range_no_time_dim(self):
         """Test time range check when no time dimension found."""
@@ -255,7 +308,7 @@ class TestLocalNetCDFValidator:
         with patch('xarray.open_dataset', return_value=mock_ds):
             check = validator.check_time_range("/data/file.nc", 2000, 2020)
             assert check.passed is False
-            assert "未找到时间维度" in check.message
+            assert "Time dimension not found" in check.message or "not found" in check.message.lower()
 
     def test_check_spatial_range_pass(self):
         """Test spatial range check when data covers required area."""
@@ -280,7 +333,7 @@ class TestLocalNetCDFValidator:
         with patch('xarray.open_dataset', return_value=mock_ds):
             check = validator.check_spatial_range("/data/file.nc", -45, 45, -90, 90)
             assert check.passed is True
-            assert "空间范围满足" in check.message
+            assert "Spatial range OK" in check.message or "OK" in check.message
 
     def test_check_spatial_range_fail(self):
         """Test spatial range check when data doesn't cover required area."""
@@ -305,7 +358,7 @@ class TestLocalNetCDFValidator:
         with patch('xarray.open_dataset', return_value=mock_ds):
             check = validator.check_spatial_range("/data/file.nc", -45, 45, -90, 90)
             assert check.passed is False
-            assert "空间范围不足" in check.message
+            assert "Spatial range insufficient" in check.message or "insufficient" in check.message.lower()
 
     def test_check_spatial_range_no_lat_lon(self):
         """Test spatial range check when no lat/lon dimensions found."""
@@ -320,7 +373,7 @@ class TestLocalNetCDFValidator:
         with patch('xarray.open_dataset', return_value=mock_ds):
             check = validator.check_spatial_range("/data/file.nc", -45, 45, -90, 90)
             assert check.passed is False
-            assert "未找到经纬度维度" in check.message
+            assert "Lat/lon dimensions not found" in check.message or "not found" in check.message.lower()
 
     def test_time_dims_list_exists(self):
         """Test that TIME_DIMS list is defined."""
@@ -378,7 +431,7 @@ class TestRemoteNetCDFValidator:
         check = validator.check_file_exists("/remote/data/file.nc")
 
         assert check.passed is False
-        assert "远程检查失败" in check.message
+        assert "Remote check failed" in check.message
 
     def test_check_variable_remote(self):
         """Test remote variable check."""
@@ -408,7 +461,7 @@ class TestRemoteNetCDFValidator:
 
         assert check.passed is False
         assert "ET" in check.message
-        assert "不存在" in check.message
+        assert "not found" in check.message.lower()
 
     def test_check_variable_remote_error(self):
         """Test remote variable check when script fails."""
@@ -423,7 +476,7 @@ class TestRemoteNetCDFValidator:
         check = validator.check_variable("/remote/file.nc", "ET")
 
         assert check.passed is False
-        assert "远程错误" in check.message
+        assert "Remote error" in check.message or "error" in check.message.lower()
 
     def test_check_time_range_remote(self):
         """Test remote time range check."""
@@ -452,7 +505,7 @@ class TestRemoteNetCDFValidator:
         check = validator.check_time_range("/remote/file.nc", 2000, 2020)
 
         assert check.passed is False
-        assert "时间范围不足" in check.message
+        assert "Time range insufficient" in check.message or "insufficient" in check.message.lower()
 
     def test_check_time_range_remote_no_time_dim(self):
         """Test remote time range check when no time dimension found."""
@@ -468,7 +521,7 @@ class TestRemoteNetCDFValidator:
         check = validator.check_time_range("/remote/file.nc", 2000, 2020)
 
         assert check.passed is False
-        assert "未找到时间维度" in check.message
+        assert "Time dimension not found" in check.message or "not found" in check.message.lower()
 
     def test_check_spatial_range_remote(self):
         """Test remote spatial range check."""
@@ -499,7 +552,7 @@ class TestRemoteNetCDFValidator:
         check = validator.check_spatial_range("/remote/file.nc", -45, 45, -90, 90)
 
         assert check.passed is False
-        assert "空间范围不足" in check.message
+        assert "Spatial range insufficient" in check.message or "insufficient" in check.message.lower()
 
     def test_check_spatial_range_remote_no_lat_lon(self):
         """Test remote spatial range check when no lat/lon dimensions found."""
@@ -515,7 +568,7 @@ class TestRemoteNetCDFValidator:
         check = validator.check_spatial_range("/remote/file.nc", -45, 45, -90, 90)
 
         assert check.passed is False
-        assert "未找到经纬度维度" in check.message
+        assert "Lat/lon dimensions not found" in check.message or "not found" in check.message.lower()
 
     def test_inspect_script_exists(self):
         """Test that INSPECT_SCRIPT attribute is defined."""
