@@ -2,7 +2,7 @@
 
 /* === Global === */
 QWidget {
-    font-family: "Helvetica Neue", "Segoe UI", "Noto Sans", sans-serif;
+    font-family: sans-serif;
     font-size: 14px;
     color: #333333;
     background-color: #f5f5f5;
@@ -201,7 +201,7 @@ QTextEdit, QPlainTextEdit {
     color: #d4d4d4;
     border: 1px solid #333333;
     border-radius: 6px;
-    font-family: "Monaco", "Menlo", "Consolas", "Courier New", monospace;
+    font-family: monospace;
     font-size: 12px;
     padding: 8px;
 }
