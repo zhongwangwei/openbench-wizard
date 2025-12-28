@@ -106,6 +106,7 @@ def main():
     # Now import Qt modules
     from PySide6.QtWidgets import QApplication
     from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
     from ui.main_window import MainWindow
 
     # Enable high DPI scaling
@@ -117,6 +118,16 @@ def main():
     app.setApplicationName("OpenBench Wizard")
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("OpenBench")
+
+    # Set platform-specific font
+    system = platform.system()
+    if system == "Darwin":
+        font = QFont("Helvetica Neue", 14)
+    elif system == "Windows":
+        font = QFont("Segoe UI", 14)
+    else:  # Linux
+        font = QFont("Noto Sans", 14)
+    app.setFont(font)
 
     # Load stylesheet (use get_resource_path for PyInstaller compatibility)
     styles_dir = get_resource_path("ui/styles")

@@ -148,17 +148,13 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,  # Use onedir mode for faster startup
     name='OpenBench_Wizard',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -166,3 +162,24 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+# Collect all files into a directory
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='OpenBench_Wizard',
+)
+
+# macOS app bundle
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='OpenBench_Wizard.app',
+        icon=None,
+        bundle_identifier='com.openbench.wizard',
+    )
