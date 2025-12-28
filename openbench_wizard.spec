@@ -80,6 +80,11 @@ hidden_imports = [
     'cryptography.hazmat.backends.openssl',
     'cryptography.hazmat.bindings.openssl',
     'cryptography.hazmat.primitives.ciphers',
+    # Data validation (NetCDF support)
+    'xarray',
+    'numpy',
+    'pandas',
+    'netCDF4',
     # Core modules
     'core',
     'core.config_manager',
@@ -116,10 +121,10 @@ datas = [
     ('ui/styles', 'ui/styles'),
 ] + qt_plugins_datas
 
-# Exclude heavy packages not needed by the app (avoids build issues)
+# Exclude packages not needed by the app
 excludes = [
-    'numpy', 'matplotlib', 'scipy', 'pandas',
-    'xarray', 'dask', 'pyarrow', 'PIL', 'tkinter',
+    'matplotlib', 'scipy',
+    'dask', 'pyarrow', 'PIL', 'tkinter',
 ]
 
 a = Analysis(
