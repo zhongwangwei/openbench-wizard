@@ -119,7 +119,11 @@ hidden_imports = [
 # Data files to include
 datas = [
     ('ui/styles', 'ui/styles'),
+    ('resources', 'resources'),
 ] + qt_plugins_datas
+
+# Icon file (Windows)
+icon_file = 'resources/icons/app.ico' if os.path.exists('resources/icons/app.ico') else None
 
 # Exclude packages not needed by the app
 excludes = [
@@ -161,6 +165,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=icon_file,
 )
 
 # Collect all files into a directory
