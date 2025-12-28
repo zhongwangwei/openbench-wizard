@@ -71,8 +71,8 @@ class PageRefData(BasePage):
         # Add validate button at bottom
         validate_layout = QHBoxLayout()
         validate_layout.addStretch()
-        self.validate_btn = QPushButton("验证数据")
-        self.validate_btn.setToolTip("检查所有数据源的文件、变量名、时间和空间范围")
+        self.validate_btn = QPushButton("Validate Data")
+        self.validate_btn.setToolTip("Check files, variable names, time and spatial ranges for all data sources")
         self.validate_btn.clicked.connect(self._validate_data)
         validate_layout.addWidget(self.validate_btn)
         self.content_layout.addLayout(validate_layout)
@@ -272,6 +272,9 @@ class PageRefData(BasePage):
         """
         import os
         import yaml
+
+        # Clear existing source configs before reloading
+        self._source_configs.clear()
 
         self._rebuild_variable_groups()
 
@@ -496,7 +499,7 @@ class PageRefData(BasePage):
             if not sources:
                 error = ValidationError(
                     field_name="data_source",
-                    message=f"{var_name.replace('_', ' ')} 缺少参考数据源配置",
+                    message=f"{var_name.replace('_', ' ')} is missing reference data source configuration",
                     page_id=self.PAGE_ID,
                     context={"var_name": var_name}
                 )
@@ -512,7 +515,7 @@ class PageRefData(BasePage):
                 if not varname:
                     error = ValidationError(
                         field_name="varname",
-                        message=f"变量名不能为空\n\n数据源: {source_name}\n变量: {var_name.replace('_', ' ')}",
+                        message=f"Variable name is required\n\nData source: {source_name}\nVariable: {var_name.replace('_', ' ')}",
                         page_id=self.PAGE_ID,
                         context={"var_name": var_name, "source_name": source_name}
                     )
@@ -527,7 +530,7 @@ class PageRefData(BasePage):
                 if not prefix and not suffix:
                     error = ValidationError(
                         field_name="prefix/suffix",
-                        message=f"文件前缀和后缀至少填写一个\n\n数据源: {source_name}\n变量: {var_name.replace('_', ' ')}",
+                        message=f"At least one of file prefix or suffix is required\n\nData source: {source_name}\nVariable: {var_name.replace('_', ' ')}",
                         page_id=self.PAGE_ID,
                         context={"var_name": var_name, "source_name": source_name}
                     )
@@ -541,7 +544,7 @@ class PageRefData(BasePage):
                 if not root_dir:
                     error = ValidationError(
                         field_name="root_dir",
-                        message=f"根目录不能为空\n\n数据源: {source_name}\n变量: {var_name.replace('_', ' ')}",
+                        message=f"Root directory is required\n\nData source: {source_name}\nVariable: {var_name.replace('_', ' ')}",
                         page_id=self.PAGE_ID,
                         context={"var_name": var_name, "source_name": source_name}
                     )
@@ -574,7 +577,7 @@ class PageRefData(BasePage):
         # Check if any sources configured
         if not self._source_configs:
             QMessageBox.information(
-                self, "无数据", "没有配置任何数据源，请先添加数据源。"
+                self, "No Data", "No data sources configured. Please add a data source first."
             )
             return
 
@@ -587,7 +590,7 @@ class PageRefData(BasePage):
 
         if is_remote and not ssh_manager:
             QMessageBox.warning(
-                self, "未连接", "远程模式需要先连接到服务器。"
+                self, "Not Connected", "Remote mode requires connecting to the server first."
             )
             return
 
