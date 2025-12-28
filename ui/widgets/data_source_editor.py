@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QPushButton, QGroupBox, QRadioButton, QButtonGroup,
     QDialogButtonBox, QLabel, QMessageBox, QFileDialog,
-    QCheckBox
+    QCheckBox, QScrollArea, QWidget
 )
 from PySide6.QtCore import Qt
 
@@ -62,6 +62,7 @@ class DataSourceEditor(QDialog):
             title = "New Data Source"
         self.setWindowTitle(title)
         self.setMinimumWidth(500)
+        self.setMaximumHeight(700)  # Limit height to ensure buttons are visible
         self.setModal(True)
 
         self._setup_ui()
@@ -114,8 +115,19 @@ class DataSourceEditor(QDialog):
 
     def _setup_ui(self):
         """Setup dialog UI."""
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(10)
+
+        # Create scroll area for content
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+
+        # Content widget inside scroll area
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         layout.setSpacing(15)
+        layout.setContentsMargins(0, 0, 10, 0)  # Right margin for scrollbar
 
         # === Load from File Button ===
         load_layout = QHBoxLayout()
@@ -316,13 +328,17 @@ class DataSourceEditor(QDialog):
 
             layout.addWidget(var_group)
 
-        # === Dialog Buttons ===
+        # Finalize scroll area
+        scroll_area.setWidget(content_widget)
+        main_layout.addWidget(scroll_area, 1)  # Stretch factor 1 to fill space
+
+        # === Dialog Buttons (outside scroll area) ===
         btn_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
         btn_box.accepted.connect(self.accept)
         btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
+        main_layout.addWidget(btn_box)
 
     def _setup_remote_browsing(self):
         """Setup remote browsing for PathSelector widgets if ssh_manager is provided."""
@@ -941,7 +957,7 @@ class DataSourceEditor(QDialog):
             error = FieldValidator.required(
                 self.name_input.text().strip(),
                 "source_name",
-                "数据源名称不能为空",
+                "Source name is required",
                 widget=self.name_input
             )
             if error:
@@ -952,7 +968,7 @@ class DataSourceEditor(QDialog):
         error = FieldValidator.required(
             root_dir,
             "root_dir",
-            "根目录不能为空",
+            "Root directory is required",
             widget=self.root_dir
         )
         if error:
@@ -962,30 +978,29 @@ class DataSourceEditor(QDialog):
         error = FieldValidator.required(
             self.varname_input.text().strip(),
             "varname",
-            "变量名不能为空",
+            "Variable name is required",
             widget=self.varname_input
-        )
-        if error:
-            errors.append(error)
-
-        # Validate prefix/suffix (at least one required)
-        error = FieldValidator.at_least_one(
-            [self.prefix_input.text().strip(), self.suffix_input.text().strip()],
-            ["prefix", "suffix"],
-            "文件前缀和后缀至少填写一个",
-            widget=self.prefix_input
         )
         if error:
             errors.append(error)
 
         # Grid type specific validations
         if self.radio_grid.isChecked():
+            # Validate prefix/suffix (at least one required for grid type only)
+            error = FieldValidator.at_least_one(
+                [self.prefix_input.text().strip(), self.suffix_input.text().strip()],
+                ["prefix", "suffix"],
+                "At least one of file prefix or suffix is required",
+                widget=self.prefix_input
+            )
+            if error:
+                errors.append(error)
             # Grid resolution required
             grid_res = self.grid_res_input.text().strip()
             error = FieldValidator.required(
                 grid_res,
                 "grid_res",
-                "Grid 类型数据必须填写网格分辨率",
+                "Grid resolution is required for grid data type",
                 widget=self.grid_res_input
             )
             if error:
@@ -998,7 +1013,7 @@ class DataSourceEditor(QDialog):
             error = FieldValidator.required(
                 syear,
                 "syear",
-                "Grid 类型数据必须填写起始年份",
+                "Start year is required for grid data type",
                 widget=self.syear_input
             )
             if error:
@@ -1007,7 +1022,7 @@ class DataSourceEditor(QDialog):
             error = FieldValidator.required(
                 eyear,
                 "eyear",
-                "Grid 类型数据必须填写结束年份",
+                "End year is required for grid data type",
                 widget=self.eyear_input
             )
             if error:
@@ -1022,7 +1037,7 @@ class DataSourceEditor(QDialog):
                         syear_int,
                         eyear_int,
                         "year_range",
-                        "起始年份不能大于结束年份",
+                        "Start year cannot be greater than end year",
                         widget=self.syear_input
                     )
                     if error:
@@ -1043,7 +1058,7 @@ class DataSourceEditor(QDialog):
                 if not is_valid:
                     error = ValidationError(
                         "root_dir",
-                        f"根目录路径不存在: {root_dir}",
+                        f"Root directory does not exist: {root_dir}",
                         "",
                         self.root_dir
                     )
@@ -1059,7 +1074,7 @@ class DataSourceEditor(QDialog):
                     if not is_valid:
                         error = ValidationError(
                             "fulllist",
-                            f"站点列表文件不存在: {fulllist_path}",
+                            f"Station list file does not exist: {fulllist_path}",
                             "",
                             self.fulllist
                         )
@@ -1075,7 +1090,7 @@ class DataSourceEditor(QDialog):
                     if not is_valid:
                         error = ValidationError(
                             "model_nml",
-                            f"模型定义文件不存在: {model_path}",
+                            f"Model definition file does not exist: {model_path}",
                             "",
                             self.model_nml
                         )
