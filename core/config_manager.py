@@ -139,7 +139,7 @@ class ConfigManager:
             "statistics": general.get("statistics", False),
             "debug_mode": general.get("debug_mode", False),
             "only_drawing": general.get("only_drawing", False),
-            "weight": general.get("weight", "none"),
+            "weight": None if general.get("weight", "none").lower() == "none" else general.get("weight"),
             "IGBP_groupby": general.get("IGBP_groupby", True),
             "PFT_groupby": general.get("PFT_groupby", True),
             "Climate_zone_groupby": general.get("Climate_zone_groupby", True),
@@ -462,11 +462,12 @@ class ConfigManager:
                 # Store general section (shared) - but use the first one, don't overwrite
                 if "general" in config and "_general" not in organized_configs[source_name]:
                     organized_configs[source_name]["_general"] = config["general"].copy()
-                # Store var-specific config
+                # Store var-specific config - copy all fields except internal ones
                 var_config = {}
-                for field in ["sub_dir", "varname", "varunit", "prefix", "suffix"]:
-                    if field in config:
-                        var_config[field] = config[field]
+                skip_fields = {"general", "_var_name", "def_nml_path"}
+                for field, value in config.items():
+                    if field not in skip_fields:
+                        var_config[field] = value
 
                 # Store per-variable time range settings for this specific variable
                 general = config.get("general", {})

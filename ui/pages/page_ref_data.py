@@ -340,13 +340,12 @@ class PageRefData(BasePage):
                         if "general" in nml_content:
                             source_data["general"] = nml_content["general"].copy()
 
-                        # Load variable-specific settings (sub_dir, varname, prefix, suffix, varunit, syear, eyear)
+                        # Load variable-specific settings (all fields from var section)
                         if var_name in nml_content:
                             var_config = nml_content[var_name]
-                            # Store var-specific fields at top level for DataSourceEditor
-                            for field in ["sub_dir", "varname", "varunit", "prefix", "suffix", "syear", "eyear"]:
-                                if field in var_config:
-                                    source_data[field] = var_config[field]
+                            # Store all var-specific fields at top level for DataSourceEditor
+                            for field, value in var_config.items():
+                                source_data[field] = value
 
                 self._source_configs[var_name][source_name] = source_data
 
