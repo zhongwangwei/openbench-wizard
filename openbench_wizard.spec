@@ -59,9 +59,29 @@ hidden_imports = [
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
+    'PySide6.QtNetwork',
+    'shiboken6',
     # Third party
     'yaml',
     'psutil',
+    # Paramiko (SSH)
+    'paramiko',
+    'paramiko.transport',
+    'paramiko.sftp',
+    'paramiko.sftp_client',
+    'paramiko.rsakey',
+    'paramiko.ecdsakey',
+    'paramiko.ed25519key',
+    # Cryptography (required by paramiko)
+    'cryptography',
+    'cryptography.hazmat.backends.openssl',
+    'cryptography.hazmat.bindings.openssl',
+    'cryptography.hazmat.primitives.ciphers',
+    # Data validation
+    'xarray',
+    'numpy',
+    'pandas',
+    'netCDF4',
     # Core modules
     'core',
     'core.config_manager',
@@ -98,6 +118,12 @@ datas = [
     ('ui/styles', 'ui/styles'),
 ] + qt_plugins_datas
 
+# Exclude heavy packages not needed by the app (avoids build issues)
+excludes = [
+    'matplotlib', 'scipy',
+    'dask', 'pyarrow', 'PIL', 'tkinter',
+]
+
 a = Analysis(
     ['main.py'],
     pathex=['.'],
@@ -107,7 +133,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
