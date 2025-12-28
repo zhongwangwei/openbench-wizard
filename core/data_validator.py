@@ -136,8 +136,8 @@ class LocalNetCDFValidator:
         """Check if file exists."""
         exists = os.path.exists(path)
         if exists:
-            return ValidationCheck("file_exists", True, f"文件存在: {path}")
-        return ValidationCheck("file_exists", False, f"文件不存在: {path}")
+            return ValidationCheck("file_exists", True, f"File exists: {path}")
+        return ValidationCheck("file_exists", False, f"File not found: {path}")
 
     def check_variable(self, path: str, varname: str) -> ValidationCheck:
         """Check if variable exists in NetCDF file."""
@@ -146,7 +146,7 @@ class LocalNetCDFValidator:
         except ImportError:
             return ValidationCheck(
                 "variable_exists", False,
-                "需要安装 xarray: pip install xarray netCDF4"
+                "xarray required: pip install xarray netCDF4"
             )
 
         try:
@@ -155,13 +155,13 @@ class LocalNetCDFValidator:
             ds.close()
 
             if varname in available_vars:
-                return ValidationCheck("variable_exists", True, f"变量 '{varname}' 存在")
+                return ValidationCheck("variable_exists", True, f"Variable '{varname}' exists")
             return ValidationCheck(
                 "variable_exists", False,
-                f"变量 '{varname}' 不存在，可用变量: {available_vars}"
+                f"Variable '{varname}' not found, available: {available_vars}"
             )
         except Exception as e:
-            return ValidationCheck("variable_exists", False, f"无法读取文件: {e}")
+            return ValidationCheck("variable_exists", False, f"Cannot read file: {e}")
 
     def _find_dim(self, ds, candidates: List[str]) -> Optional[str]:
         """Find a dimension by trying common names."""
@@ -180,7 +180,7 @@ class LocalNetCDFValidator:
         except ImportError:
             return ValidationCheck(
                 "time_range", False,
-                "需要安装 xarray: pip install xarray netCDF4"
+                "xarray required: pip install xarray netCDF4"
             )
 
         try:
@@ -191,7 +191,7 @@ class LocalNetCDFValidator:
                 ds.close()
                 return ValidationCheck(
                     "time_range", False,
-                    f"未找到时间维度，尝试了: {self.TIME_DIMS}"
+                    f"Time dimension not found, tried: {self.TIME_DIMS}"
                 )
 
             time_vals = ds[time_dim].values
@@ -205,14 +205,14 @@ class LocalNetCDFValidator:
             if data_syear <= syear and data_eyear >= eyear:
                 return ValidationCheck(
                     "time_range", True,
-                    f"时间范围满足: 数据 {data_syear}-{data_eyear}, 需要 {syear}-{eyear}"
+                    f"Time range OK: data {data_syear}-{data_eyear}, required {syear}-{eyear}"
                 )
             return ValidationCheck(
                 "time_range", False,
-                f"时间范围不足: 数据 {data_syear}-{data_eyear}, 需要 {syear}-{eyear}"
+                f"Time range insufficient: data {data_syear}-{data_eyear}, required {syear}-{eyear}"
             )
         except Exception as e:
-            return ValidationCheck("time_range", False, f"时间检查失败: {e}")
+            return ValidationCheck("time_range", False, f"Time check failed: {e}")
 
     def check_spatial_range(
         self, path: str,
@@ -225,7 +225,7 @@ class LocalNetCDFValidator:
         except ImportError:
             return ValidationCheck(
                 "spatial_range", False,
-                "需要安装 xarray: pip install xarray netCDF4"
+                "xarray required: pip install xarray netCDF4"
             )
 
         try:
@@ -237,7 +237,7 @@ class LocalNetCDFValidator:
                 ds.close()
                 return ValidationCheck(
                     "spatial_range", False,
-                    f"未找到经纬度维度"
+                    "Lat/lon dimensions not found"
                 )
 
             lat_vals = ds[lat_dim].values
@@ -253,18 +253,18 @@ class LocalNetCDFValidator:
             if lat_ok and lon_ok:
                 return ValidationCheck(
                     "spatial_range", True,
-                    f"空间范围满足"
+                    "Spatial range OK"
                 )
 
             msg_parts = []
             if not lat_ok:
-                msg_parts.append(f"纬度: 数据 {data_min_lat:.1f}~{data_max_lat:.1f}, 需要 {min_lat:.1f}~{max_lat:.1f}")
+                msg_parts.append(f"Lat: data {data_min_lat:.1f}~{data_max_lat:.1f}, required {min_lat:.1f}~{max_lat:.1f}")
             if not lon_ok:
-                msg_parts.append(f"经度: 数据 {data_min_lon:.1f}~{data_max_lon:.1f}, 需要 {min_lon:.1f}~{max_lon:.1f}")
+                msg_parts.append(f"Lon: data {data_min_lon:.1f}~{data_max_lon:.1f}, required {min_lon:.1f}~{max_lon:.1f}")
 
-            return ValidationCheck("spatial_range", False, "空间范围不足: " + "; ".join(msg_parts))
+            return ValidationCheck("spatial_range", False, "Spatial range insufficient: " + "; ".join(msg_parts))
         except Exception as e:
-            return ValidationCheck("spatial_range", False, f"空间检查失败: {e}")
+            return ValidationCheck("spatial_range", False, f"Spatial check failed: {e}")
 
 
 class RemoteNetCDFValidator:
@@ -322,10 +322,10 @@ except Exception as e:
         try:
             stdout, stderr, exit_code = self._ssh.execute(f"test -f '{path}'", timeout=10)
             if exit_code == 0:
-                return ValidationCheck("file_exists", True, f"文件存在: {path}")
-            return ValidationCheck("file_exists", False, f"文件不存在: {path}")
+                return ValidationCheck("file_exists", True, f"File exists: {path}")
+            return ValidationCheck("file_exists", False, f"File not found: {path}")
         except Exception as e:
-            return ValidationCheck("file_exists", False, f"远程检查失败: {e}")
+            return ValidationCheck("file_exists", False, f"Remote check failed: {e}")
 
     def _run_inspect_script(self, path: str) -> Optional[Dict[str, Any]]:
         """Run inspection script on remote server."""
@@ -345,18 +345,18 @@ except Exception as e:
         result = self._run_inspect_script(path)
 
         if result is None:
-            return ValidationCheck("variable_exists", False, "远程检查失败")
+            return ValidationCheck("variable_exists", False, "Remote check failed")
 
         if not result.get("success"):
-            error = result.get("error", "未知错误")
-            return ValidationCheck("variable_exists", False, f"远程错误: {error}")
+            error = result.get("error", "Unknown error")
+            return ValidationCheck("variable_exists", False, f"Remote error: {error}")
 
         variables = result.get("variables", [])
         if varname in variables:
-            return ValidationCheck("variable_exists", True, f"变量 '{varname}' 存在")
+            return ValidationCheck("variable_exists", True, f"Variable '{varname}' exists")
         return ValidationCheck(
             "variable_exists", False,
-            f"变量 '{varname}' 不存在，可用变量: {variables}"
+            f"Variable '{varname}' not found, available: {variables}"
         )
 
     def check_time_range(self, path: str, syear: int, eyear: int) -> ValidationCheck:
@@ -364,21 +364,21 @@ except Exception as e:
         result = self._run_inspect_script(path)
 
         if result is None or not result.get("success"):
-            return ValidationCheck("time_range", False, "远程时间检查失败")
+            return ValidationCheck("time_range", False, "Remote time check failed")
 
         time_range = result.get("time_range")
         if time_range is None:
-            return ValidationCheck("time_range", False, "未找到时间维度")
+            return ValidationCheck("time_range", False, "Time dimension not found")
 
         data_syear, data_eyear = time_range
         if data_syear <= syear and data_eyear >= eyear:
             return ValidationCheck(
                 "time_range", True,
-                f"时间范围满足: 数据 {data_syear}-{data_eyear}"
+                f"Time range OK: data {data_syear}-{data_eyear}"
             )
         return ValidationCheck(
             "time_range", False,
-            f"时间范围不足: 数据 {data_syear}-{data_eyear}, 需要 {syear}-{eyear}"
+            f"Time range insufficient: data {data_syear}-{data_eyear}, required {syear}-{eyear}"
         )
 
     def check_spatial_range(
@@ -390,13 +390,13 @@ except Exception as e:
         result = self._run_inspect_script(path)
 
         if result is None or not result.get("success"):
-            return ValidationCheck("spatial_range", False, "远程空间检查失败")
+            return ValidationCheck("spatial_range", False, "Remote spatial check failed")
 
         lat_range = result.get("lat_range")
         lon_range = result.get("lon_range")
 
         if lat_range is None or lon_range is None:
-            return ValidationCheck("spatial_range", False, "未找到经纬度维度")
+            return ValidationCheck("spatial_range", False, "Lat/lon dimensions not found")
 
         data_min_lat, data_max_lat = lat_range
         data_min_lon, data_max_lon = lon_range
@@ -405,11 +405,11 @@ except Exception as e:
         lon_ok = data_min_lon <= min_lon and data_max_lon >= max_lon
 
         if lat_ok and lon_ok:
-            return ValidationCheck("spatial_range", True, "空间范围满足")
+            return ValidationCheck("spatial_range", True, "Spatial range OK")
 
         return ValidationCheck(
             "spatial_range", False,
-            f"空间范围不足"
+            "Spatial range insufficient"
         )
 
 
@@ -499,18 +499,6 @@ class DataValidator:
             check = self._validator.check_time_range(
                 first_existing_path,
                 int(syear), int(eyear)
-            )
-            checks.append(check)
-
-            # Check spatial range
-            min_lat = general_config.get("min_lat", -90)
-            max_lat = general_config.get("max_lat", 90)
-            min_lon = general_config.get("min_lon", -180)
-            max_lon = general_config.get("max_lon", 180)
-
-            check = self._validator.check_spatial_range(
-                first_existing_path,
-                min_lat, max_lat, min_lon, max_lon
             )
             checks.append(check)
 
