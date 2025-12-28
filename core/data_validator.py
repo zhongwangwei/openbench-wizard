@@ -202,8 +202,16 @@ class LocalNetCDFValidator:
             time_vals = ds[time_dim].values
             ds.close()
 
-            # Convert to years
-            time_years = pd.to_datetime(time_vals).year
+            # Convert to years - handle cftime objects
+            try:
+                time_years = pd.to_datetime(time_vals).year
+            except (TypeError, ValueError):
+                # cftime or other non-standard calendar - skip time check
+                return ValidationCheck(
+                    "time_range", True,
+                    "Time check skipped (non-standard calendar)"
+                )
+
             data_syear = int(time_years.min())
             data_eyear = int(time_years.max())
 
@@ -502,8 +510,9 @@ class DataValidator:
             check = self._validator.check_variable(first_existing_path, varname)
             checks.append(check)
 
-        # Check time range (only for grid data)
-        if data_type == "grid":
+        # Check time range (only for grid data with Single groupby)
+        # For Year/Month/Day groupby, each file only contains partial data
+        if data_type == "grid" and data_groupby == "Single":
             check = self._validator.check_time_range(
                 first_existing_path,
                 int(syear), int(eyear)
