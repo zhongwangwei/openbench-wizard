@@ -524,22 +524,24 @@ class PageRefData(BasePage):
                     self._select_and_edit_source(var_name, source_name)
                     return False
 
-                # Check prefix/suffix
-                prefix = source_data.get("prefix", "")
-                suffix = source_data.get("suffix", "")
-                if not prefix and not suffix:
-                    error = ValidationError(
-                        field_name="prefix/suffix",
-                        message=f"At least one of file prefix or suffix is required\n\nData source: {source_name}\nVariable: {var_name.replace('_', ' ')}",
-                        page_id=self.PAGE_ID,
-                        context={"var_name": var_name, "source_name": source_name}
-                    )
-                    manager.show_error_and_focus(error)
-                    self._select_and_edit_source(var_name, source_name)
-                    return False
+                # Check prefix/suffix (only for grid data, not station data)
+                general = source_data.get("general", {})
+                data_type = general.get("data_type", "grid")
+                if data_type != "stn":
+                    prefix = source_data.get("prefix", "")
+                    suffix = source_data.get("suffix", "")
+                    if not prefix and not suffix:
+                        error = ValidationError(
+                            field_name="prefix/suffix",
+                            message=f"At least one of file prefix or suffix is required\n\nData source: {source_name}\nVariable: {var_name.replace('_', ' ')}",
+                            page_id=self.PAGE_ID,
+                            context={"var_name": var_name, "source_name": source_name}
+                        )
+                        manager.show_error_and_focus(error)
+                        self._select_and_edit_source(var_name, source_name)
+                        return False
 
                 # Check root_dir
-                general = source_data.get("general", {})
                 root_dir = general.get("root_dir", "") or general.get("dir", "")
                 if not root_dir:
                     error = ValidationError(
