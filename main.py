@@ -14,6 +14,22 @@ import platform
 from pathlib import Path
 
 
+def get_resource_path(relative_path: str) -> Path:
+    """
+    Get the absolute path to a resource, works for dev and PyInstaller builds.
+
+    In PyInstaller bundles, files are extracted to sys._MEIPASS.
+    In development, use the script's directory.
+    """
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running in PyInstaller bundle
+        base_path = Path(sys._MEIPASS)
+    else:
+        # Running in development
+        base_path = Path(__file__).parent
+    return base_path / relative_path
+
+
 def check_display_environment():
     """
     Check if DISPLAY environment is properly configured for X11.
@@ -102,8 +118,8 @@ def main():
     app.setApplicationVersion("1.0.0")
     app.setOrganizationName("OpenBench")
 
-    # Load stylesheet
-    styles_dir = Path(__file__).parent / "ui" / "styles"
+    # Load stylesheet (use get_resource_path for PyInstaller compatibility)
+    styles_dir = get_resource_path("ui/styles")
     stylesheet_path = styles_dir / "theme.qss"
     checkmark_path = styles_dir / "checkmark.png"
 
