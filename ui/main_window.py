@@ -13,10 +13,14 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QFrame, QMessageBox,
     QFileDialog, QSplitter, QDialog
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 
 from ui.wizard_controller import WizardController
 from ui.widgets.remote_config import RemoteFileBrowser
+from ui.dialogs.project_selector import ProjectSelectorDialog
+from ui.widgets.sync_status import SyncStatusWidget
+from core.storage import ProjectStorage, LocalStorage, RemoteStorage
+from core.sync_engine import SyncStatus
 from core.path_utils import (
     get_openbench_root, to_absolute_path, convert_paths_in_dict,
     validate_paths_in_dict, normalize_path_separators
@@ -44,10 +48,17 @@ class MainWindow(QMainWindow):
         # Set project_root on startup
         self.controller.project_root = get_openbench_root()
 
+        # Sync status widget (created later if needed for remote mode)
+        self._sync_status = None
+        self._nav_bar_layout = None  # Reference to nav bar layout for sync status
+
         # Setup UI
         self._setup_ui()
         self._connect_signals()
         self._update_navigation()
+
+        # Show project selector on startup (after window is ready)
+        QTimer.singleShot(100, self._show_project_selector)
 
     def _setup_ui(self):
         """Initialize the user interface."""
@@ -147,32 +158,32 @@ class MainWindow(QMainWindow):
                 border-top: 1px solid #e0e0e0;
             }
         """)
-        nav_bar_layout = QHBoxLayout(nav_bar)
-        nav_bar_layout.setContentsMargins(20, 15, 20, 15)
+        self._nav_bar_layout = QHBoxLayout(nav_bar)
+        self._nav_bar_layout.setContentsMargins(20, 15, 20, 15)
 
         self.btn_back = QPushButton("Back")
         self.btn_back.setProperty("secondary", True)
         self.btn_back.setMinimumWidth(100)
-        nav_bar_layout.addWidget(self.btn_back)
+        self._nav_bar_layout.addWidget(self.btn_back)
 
-        nav_bar_layout.addStretch()
+        self._nav_bar_layout.addStretch()
 
         # Page indicator
         self.page_indicator = QLabel("Step 1 of 10")
         self.page_indicator.setStyleSheet("color: #666666;")
-        nav_bar_layout.addWidget(self.page_indicator)
+        self._nav_bar_layout.addWidget(self.page_indicator)
 
-        nav_bar_layout.addStretch()
+        self._nav_bar_layout.addStretch()
 
         # Rerun button (only visible on run_monitor page)
         self.btn_rerun = QPushButton("Rerun")
         self.btn_rerun.setMinimumWidth(100)
         self.btn_rerun.setVisible(False)
-        nav_bar_layout.addWidget(self.btn_rerun)
+        self._nav_bar_layout.addWidget(self.btn_rerun)
 
         self.btn_next = QPushButton("Next")
         self.btn_next.setMinimumWidth(100)
-        nav_bar_layout.addWidget(self.btn_next)
+        self._nav_bar_layout.addWidget(self.btn_next)
 
         content_layout.addWidget(nav_bar)
 
@@ -855,3 +866,135 @@ class MainWindow(QMainWindow):
             self.controller.reset()
             # Set project_root for new configs
             self.controller.project_root = get_openbench_root()
+
+    def _show_project_selector(self):
+        """Show project selector dialog on startup."""
+        dialog = ProjectSelectorDialog(self)
+
+        if dialog.exec() == QDialog.Accepted:
+            storage = dialog.get_storage()
+            project_name = dialog.get_project_name()
+
+            if storage:
+                self.controller.storage = storage
+                self.controller.project_root = storage.project_dir
+
+                # Setup SSH manager for remote mode
+                ssh_manager = dialog.get_ssh_manager()
+                if ssh_manager:
+                    self.controller.ssh_manager = ssh_manager
+
+                # Update sync status widget if remote
+                if isinstance(storage, RemoteStorage):
+                    self._setup_sync_status(storage.sync_engine)
+
+                # Load project if config exists
+                self._try_load_project_config()
+
+                # Update window title with project name
+                self.setWindowTitle(f"OpenBench NML Wizard - {project_name}")
+        else:
+            # User cancelled - close application
+            self.close()
+
+    def _setup_sync_status(self, sync_engine):
+        """Setup sync status widget for remote mode."""
+        # Remove old sync status if exists
+        if self._sync_status:
+            self._sync_status.setParent(None)
+            self._sync_status.deleteLater()
+
+        self._sync_status = SyncStatusWidget(self)
+
+        # Insert sync status widget before the Rerun button in nav bar
+        # Find the index of Rerun button (it's after the second stretch)
+        if self._nav_bar_layout:
+            # Insert before the Rerun button (index 4: back, stretch, indicator, stretch, [sync], rerun, next)
+            self._nav_bar_layout.insertWidget(4, self._sync_status)
+
+        # Connect to sync engine status changes
+        def on_status_changed(path, status):
+            overall = sync_engine.get_overall_status()
+            pending = sync_engine.get_pending_count()
+            self._sync_status.set_status(overall, pending)
+
+        sync_engine._on_status_changed = on_status_changed
+        self._sync_status.retry_clicked.connect(sync_engine.retry_errors)
+
+        # Set initial status
+        overall = sync_engine.get_overall_status()
+        pending = sync_engine.get_pending_count()
+        self._sync_status.set_status(overall, pending)
+
+    def _try_load_project_config(self):
+        """Try to load existing project config if available."""
+        storage = self.controller.storage
+        if not storage:
+            return
+
+        # Look for main config in nml/
+        try:
+            files = storage.glob("nml/main-*.yaml")
+            if files:
+                # Load first main config found
+                config_path = files[0]
+                content = storage.read_file(config_path)
+                loaded_config = yaml.safe_load(content) or {}
+
+                # Extract basename from filename (main-{basename}.yaml)
+                filename = os.path.basename(config_path)
+                if filename.startswith("main-") and filename.endswith(".yaml"):
+                    basename = filename[5:-5]  # Remove "main-" prefix and ".yaml" suffix
+                else:
+                    basename = "config"
+
+                # Start with default config and merge loaded config
+                new_config = self.controller._default_config()
+
+                # Copy general settings
+                general = loaded_config.get("general", {})
+                for key, value in general.items():
+                    if key not in ("reference_nml", "simulation_nml", "statistics_nml", "figure_nml"):
+                        new_config["general"][key] = value
+
+                # Ensure basename is set
+                new_config["general"]["basename"] = basename
+
+                # Copy other sections if present
+                for section in ("evaluation_items", "metrics", "scores", "comparisons", "statistics"):
+                    if section in loaded_config:
+                        new_config[section] = loaded_config[section]
+
+                # Try to load ref and sim configs
+                ref_path = f"nml/ref-{basename}.yaml"
+                if storage.exists(ref_path):
+                    try:
+                        ref_content = storage.read_file(ref_path)
+                        ref_config = yaml.safe_load(ref_content) or {}
+                        new_config["ref_data"] = ref_config
+                    except Exception as e:
+                        logger.warning(f"Failed to load ref config: {e}")
+
+                sim_path = f"nml/sim-{basename}.yaml"
+                if storage.exists(sim_path):
+                    try:
+                        sim_content = storage.read_file(sim_path)
+                        sim_config = yaml.safe_load(sim_content) or {}
+                        new_config["sim_data"] = sim_config
+                    except Exception as e:
+                        logger.warning(f"Failed to load sim config: {e}")
+
+                # Update the controller with the loaded config
+                self.controller.config = new_config
+
+                # Navigate to the general page (skip runtime)
+                self.controller.go_to_page("general")
+
+                # Refresh all pages
+                for page_id, page in self.pages.items():
+                    if hasattr(page, 'load_from_config'):
+                        page.load_from_config()
+
+                logger.info(f"Loaded project config: {config_path}")
+        except Exception as e:
+            logger.debug(f"No existing config found or failed to load: {e}")
