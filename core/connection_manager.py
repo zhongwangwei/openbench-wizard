@@ -4,6 +4,17 @@
 SSH connection configuration manager.
 
 Saves and loads connection profiles from ~/.openbench_wizard/connections.yaml
+
+Usage:
+    This module provides persistent storage for SSH connection profiles.
+    It is intended to be used by RemoteConfigWidget to populate the connection
+    dropdown list and save new connections. The ProjectSelectorDialog indirectly
+    uses this through RemoteConfigWidget.
+
+    Example:
+        manager = ConnectionManager()
+        connections = manager.list_connections()
+        manager.save_connection(name="Server", host="user@example.com")
 """
 
 import os

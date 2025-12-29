@@ -180,10 +180,12 @@ class SyncEngine:
             if remote_dir:
                 self._ssh.execute(f"mkdir -p '{remote_dir}'", timeout=10)
 
-            # Write content using heredoc
-            # Escape single quotes in content
-            escaped = content.replace("'", "'\"'\"'")
-            cmd = f"cat > '{remote_path}' << 'EOFCONTENT'\n{content}\nEOFCONTENT"
+            # Write content using heredoc with quoted delimiter (prevents shell expansion)
+            # Note: If content contains literal 'EOFCONTENT', use a different delimiter
+            delimiter = "EOFCONTENT"
+            if delimiter in content:
+                delimiter = "EOF_SYNC_ENGINE_CONTENT_MARKER"
+            cmd = f"cat > '{remote_path}' << '{delimiter}'\n{content}\n{delimiter}"
             stdout, stderr, exit_code = self._ssh.execute(cmd, timeout=30)
 
             if exit_code != 0:
