@@ -4,7 +4,7 @@ Sync status indicator widget for remote mode.
 """
 
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
-from PySide6.QtCore import Signal, QTimer
+from PySide6.QtCore import Signal, QTimer, Qt
 
 from core.sync_engine import SyncStatus
 
@@ -13,6 +13,9 @@ class SyncStatusWidget(QWidget):
     """Widget showing sync status with retry button."""
 
     retry_clicked = Signal()
+    # Thread-safe signal for updating status from background threads
+    # Use Qt.QueuedConnection when connecting to ensure main thread execution
+    status_update_requested = Signal(object, int)  # (SyncStatus, pending_count)
 
     STATUS_COLORS = {
         SyncStatus.SYNCED: "#27ae60",   # Green
@@ -38,6 +41,17 @@ class SyncStatusWidget(QWidget):
         self._animation_timer = QTimer(self)
         self._animation_timer.timeout.connect(self._animate)
         self._animation_frame = 0
+
+        # Connect thread-safe signal to set_status with queued connection
+        # This ensures updates from background threads are executed in main thread
+        self.status_update_requested.connect(
+            self._on_status_update_requested,
+            Qt.QueuedConnection
+        )
+
+    def _on_status_update_requested(self, status, pending_count):
+        """Handle thread-safe status update request."""
+        self.set_status(status, pending_count)
 
     def _setup_ui(self):
         """Setup the widget UI."""
@@ -139,3 +153,13 @@ class SyncStatusWidget(QWidget):
     def get_pending_count(self) -> int:
         """Get the current pending count."""
         return self._pending_count
+
+    def closeEvent(self, event):
+        """Handle widget close - stop animation timer."""
+        self._animation_timer.stop()
+        super().closeEvent(event)
+
+    def __del__(self):
+        """Destructor - ensure timer is stopped."""
+        if hasattr(self, '_animation_timer') and self._animation_timer:
+            self._animation_timer.stop()

@@ -64,6 +64,7 @@ class SyncEngine:
 
         # Thread safety
         self._lock = threading.RLock()
+        self._fetching: Set[str] = set()  # Files currently being fetched from remote
 
         # Background sync
         self._pending_sync: Set[str] = set()
@@ -80,33 +81,54 @@ class SyncEngine:
         """
         Read file, from cache if available, otherwise from remote.
 
+        Thread-safe: avoids duplicate fetches if multiple threads request
+        the same file simultaneously.
+
         Args:
             path: Relative path from project directory
 
         Returns:
             File contents
         """
+        # First check: is it in cache?
         with self._lock:
-            # Check cache first
             if path in self._cache:
                 return self._cache[path]
 
-        # Fetch from remote
-        remote_path = self._remote_path(path)
-        stdout, stderr, exit_code = self._ssh.execute(
-            f"cat '{remote_path}'", timeout=30
-        )
+            # Check if another thread is fetching this file
+            # If so, wait for it to complete by polling
+            while path in self._fetching:
+                self._lock.release()
+                import time
+                time.sleep(0.05)  # Small delay before retry
+                self._lock.acquire()
+                # Check cache again after waiting
+                if path in self._cache:
+                    return self._cache[path]
 
-        if exit_code != 0:
-            raise FileNotFoundError(f"Remote file not found: {remote_path}")
+            # Mark as being fetched
+            self._fetching.add(path)
 
-        content = stdout
+        try:
+            # Fetch from remote (outside lock to avoid blocking other operations)
+            remote_path = self._remote_path(path)
+            stdout, stderr, exit_code = self._ssh.execute(
+                f"cat '{remote_path}'", timeout=30
+            )
 
-        with self._lock:
-            self._cache[path] = content
-            self._sync_status[path] = SyncStatus.SYNCED
+            if exit_code != 0:
+                raise FileNotFoundError(f"Remote file not found: {remote_path}")
 
-        return content
+            content = stdout
+
+            with self._lock:
+                self._cache[path] = content
+                self._sync_status[path] = SyncStatus.SYNCED
+
+            return content
+        finally:
+            with self._lock:
+                self._fetching.discard(path)
 
     def write(self, path: str, content: str) -> None:
         """
@@ -181,10 +203,12 @@ class SyncEngine:
                 self._ssh.execute(f"mkdir -p '{remote_dir}'", timeout=10)
 
             # Write content using heredoc with quoted delimiter (prevents shell expansion)
-            # Note: If content contains literal 'EOFCONTENT', use a different delimiter
+            # Generate a unique delimiter that doesn't appear in the content
             delimiter = "EOFCONTENT"
-            if delimiter in content:
-                delimiter = "EOF_SYNC_ENGINE_CONTENT_MARKER"
+            counter = 0
+            while delimiter in content:
+                counter += 1
+                delimiter = f"EOF_SYNC_{counter}_{hash(content) & 0xFFFFFFFF:08X}"
             cmd = f"cat > '{remote_path}' << '{delimiter}'\n{content}\n{delimiter}"
             stdout, stderr, exit_code = self._ssh.execute(cmd, timeout=30)
 
@@ -239,12 +263,16 @@ class SyncEngine:
         return exit_code == 0 and 'exists' in stdout
 
     def glob(self, pattern: str) -> List[str]:
-        """Find files matching pattern on remote."""
-        remote_pattern = self._remote_path(pattern)
-        # Use find with -path for glob-like matching
+        """Find files matching pattern on remote.
+
+        Supports standard glob patterns including ** for recursive matching.
+        """
         base_dir = self._remote_dir
+        # Use bash with globstar for ** support, ls to list matches
+        # shopt -s globstar enables ** pattern; nullglob prevents literal pattern on no match
+        cmd = f"cd '{base_dir}' && shopt -s globstar nullglob && for f in {pattern}; do [ -f \"$f\" ] && echo \"$f\"; done"
         stdout, stderr, exit_code = self._ssh.execute(
-            f"cd '{base_dir}' && find . -path './{pattern}' -type f 2>/dev/null | sed 's|^\\./||'",
+            f"bash -c '{cmd}'",
             timeout=30
         )
         if exit_code != 0:

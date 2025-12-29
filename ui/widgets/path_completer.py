@@ -38,6 +38,12 @@ class PathCompleterModel(QStringListModel):
             self.setStringList([])
             return []
 
+        # Skip absolute paths - ProjectStorage only handles relative paths
+        # Absolute paths are outside the project scope
+        if text.startswith('/'):
+            self.setStringList([])
+            return []
+
         # Get directory part and prefix
         if '/' in text:
             dir_part, prefix = text.rsplit('/', 1)

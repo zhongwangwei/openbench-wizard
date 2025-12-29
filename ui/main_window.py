@@ -912,11 +912,14 @@ class MainWindow(QMainWindow):
             # Insert before the Rerun button (index 4: back, stretch, indicator, stretch, [sync], rerun, next)
             self._nav_bar_layout.insertWidget(4, self._sync_status)
 
-        # Connect to sync engine status changes
+        # Connect to sync engine status changes using thread-safe signal
+        # The callback is called from background sync thread, so we use a signal
+        # with QueuedConnection to safely update UI in the main thread
         def on_status_changed(path, status):
             overall = sync_engine.get_overall_status()
             pending = sync_engine.get_pending_count()
-            self._sync_status.set_status(overall, pending)
+            # Emit signal instead of direct call - thread-safe
+            self._sync_status.status_update_requested.emit(overall, pending)
 
         sync_engine._on_status_changed = on_status_changed
         self._sync_status.retry_clicked.connect(sync_engine.retry_errors)

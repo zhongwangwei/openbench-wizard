@@ -118,10 +118,20 @@ class LocalStorage(ProjectStorage):
     """Storage implementation for local filesystem."""
 
     def _full_path(self, path: str) -> str:
-        """Get full path from relative path."""
+        """Get full path from relative path.
+
+        Raises:
+            ValueError: If path attempts to escape project directory
+        """
         if not path:
             return self._project_dir
-        return os.path.join(self._project_dir, path)
+        # Resolve the full path and check it's within project directory
+        full_path = os.path.normpath(os.path.join(self._project_dir, path))
+        # Security check: ensure path doesn't escape project directory
+        if not full_path.startswith(os.path.normpath(self._project_dir) + os.sep) and \
+           full_path != os.path.normpath(self._project_dir):
+            raise ValueError(f"Path escapes project directory: {path}")
+        return full_path
 
     def read_file(self, path: str) -> str:
         full_path = self._full_path(path)
@@ -148,7 +158,8 @@ class LocalStorage(ProjectStorage):
 
     def glob(self, pattern: str) -> List[str]:
         full_pattern = self._full_path(pattern)
-        matches = glob_module.glob(full_pattern)
+        # Use recursive=True to support ** patterns
+        matches = glob_module.glob(full_pattern, recursive=True)
         # Return paths relative to project directory
         return [os.path.relpath(m, self._project_dir) for m in matches]
 
@@ -161,6 +172,8 @@ class LocalStorage(ProjectStorage):
             os.remove(full_path)
         elif os.path.isdir(full_path):
             os.rmdir(full_path)
+        elif not os.path.exists(full_path):
+            raise FileNotFoundError(f"Path does not exist: {path}")
 
 
 class RemoteStorage(ProjectStorage):

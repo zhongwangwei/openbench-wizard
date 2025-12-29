@@ -156,3 +156,28 @@ def test_remote_storage_project_dir():
     storage = RemoteStorage("/remote/project", sync_engine)
 
     assert storage.project_dir == "/remote/project"
+
+
+# Security tests
+
+def test_local_storage_path_traversal_blocked(tmp_path):
+    """Test LocalStorage blocks path traversal attempts."""
+    storage = LocalStorage(str(tmp_path))
+
+    # Attempt to escape project directory
+    with pytest.raises(ValueError, match="Path escapes project directory"):
+        storage.read_file("../../../etc/passwd")
+
+    with pytest.raises(ValueError, match="Path escapes project directory"):
+        storage.write_file("../../escape.txt", "malicious")
+
+    with pytest.raises(ValueError, match="Path escapes project directory"):
+        storage.exists("../outside.txt")
+
+
+def test_local_storage_delete_nonexistent_raises(tmp_path):
+    """Test LocalStorage raises error when deleting non-existent file."""
+    storage = LocalStorage(str(tmp_path))
+
+    with pytest.raises(FileNotFoundError, match="Path does not exist"):
+        storage.delete("nonexistent.txt")
