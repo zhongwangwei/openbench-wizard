@@ -7,7 +7,10 @@ Unified storage interface for local and remote file operations.
 import os
 import glob as glob_module
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.sync_engine import SyncEngine
 
 
 class ProjectStorage(ABC):
@@ -158,3 +161,44 @@ class LocalStorage(ProjectStorage):
             os.remove(full_path)
         elif os.path.isdir(full_path):
             os.rmdir(full_path)
+
+
+class RemoteStorage(ProjectStorage):
+    """Storage implementation for remote server via SyncEngine."""
+
+    def __init__(self, project_dir: str, sync_engine: 'SyncEngine'):
+        """
+        Initialize remote storage.
+
+        Args:
+            project_dir: Remote project directory path
+            sync_engine: SyncEngine instance for caching and sync
+        """
+        super().__init__(project_dir)
+        self._sync = sync_engine
+
+    @property
+    def sync_engine(self) -> 'SyncEngine':
+        """Get the sync engine."""
+        return self._sync
+
+    def read_file(self, path: str) -> str:
+        return self._sync.read(path)
+
+    def write_file(self, path: str, content: str) -> None:
+        self._sync.write(path, content)
+
+    def list_dir(self, path: str) -> List[str]:
+        return self._sync.list_dir(path)
+
+    def exists(self, path: str) -> bool:
+        return self._sync.exists(path)
+
+    def glob(self, pattern: str) -> List[str]:
+        return self._sync.glob(pattern)
+
+    def mkdir(self, path: str) -> None:
+        self._sync.mkdir(path)
+
+    def delete(self, path: str) -> None:
+        self._sync.delete(path)
