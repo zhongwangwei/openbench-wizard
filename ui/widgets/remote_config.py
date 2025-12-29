@@ -265,6 +265,8 @@ class RemoteFileBrowser(QWidget):
             return
 
         name = data["name"]
+        is_link = data.get("is_link", False)
+
         if data["is_dir"]:
             # Navigate to directory (use forward slashes for remote Linux paths)
             if name == "..":
@@ -277,8 +279,29 @@ class RemoteFileBrowser(QWidget):
                 # Join paths with forward slash
                 new_path = f"{self._current_path.rstrip('/')}/{name}"
             self._load_directory(new_path)
+        elif is_link:
+            # For symlinked files, resolve the target and select it
+            full_path = f"{self._current_path.rstrip('/')}/{name}"
+            try:
+                # Resolve the symlink to get the actual file path
+                resolve_cmd = f"readlink -f '{full_path}' 2>/dev/null"
+                stdout, _, exit_code = self._ssh_manager.execute(resolve_cmd, timeout=5)
+                if exit_code == 0 and stdout.strip():
+                    resolved_path = stdout.strip()
+                    # Emit the resolved path
+                    self.file_selected.emit(resolved_path)
+                    self.parent().accept() if hasattr(self.parent(), 'accept') else None
+                else:
+                    # Fallback to the symlink path
+                    self.file_selected.emit(full_path)
+                    self.parent().accept() if hasattr(self.parent(), 'accept') else None
+            except Exception:
+                # Fallback to the symlink path
+                self.file_selected.emit(full_path)
+                self.parent().accept() if hasattr(self.parent(), 'accept') else None
         else:
-            # Select file
+            # Regular file - ensure item is selected before calling _on_select
+            self.file_list.setCurrentItem(item)
             self._on_select()
 
     def _on_path_entered(self):
@@ -579,6 +602,7 @@ class RemoteConfigWidget(QWidget):
         self.num_cores_spin = QSpinBox()
         self.num_cores_spin.setRange(1, 128)
         self.num_cores_spin.setValue(4)
+        self.num_cores_spin.setMinimumWidth(80)
         self.num_cores_spin.setToolTip("Number of CPU cores to use for parallel processing")
         self.num_cores_spin.valueChanged.connect(self._on_config_changed)
         cores_layout.addWidget(self.num_cores_spin)

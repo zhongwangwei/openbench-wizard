@@ -14,6 +14,33 @@ from typing import List, Optional, Dict, Any
 from core.path_utils import to_absolute_path, get_openbench_root
 
 
+def safe_open(path: str):
+    """Open xarray dataset, trying decode_times=False if default fails.
+
+    Args:
+        path: Path to NetCDF file
+
+    Returns:
+        xarray.Dataset
+    """
+    import xarray as xr
+    try:
+        return xr.open_dataset(path)
+    except Exception:
+        return xr.open_dataset(path, decode_times=False)
+
+
+# String version of safe_open for embedding in remote scripts
+SAFE_OPEN_CODE = '''
+def safe_open(path):
+    """Open dataset, trying decode_times=False if default fails."""
+    try:
+        return xr.open_dataset(path)
+    except Exception:
+        return xr.open_dataset(path, decode_times=False)
+'''
+
+
 @dataclass
 class ValidationCheck:
     """Single validation check result."""
@@ -147,13 +174,8 @@ class LocalNetCDFValidator:
         return ValidationCheck("file_exists", False, f"File not found: {path}")
 
     def _open_dataset(self, path: str):
-        """Open dataset, trying decode_times=False if default fails."""
-        import xarray as xr
-        try:
-            return xr.open_dataset(path)
-        except Exception:
-            # Try with decode_times=False for non-standard time units
-            return xr.open_dataset(path, decode_times=False)
+        """Open dataset using safe_open."""
+        return safe_open(path)
 
     def check_variable(self, path: str, varname: str) -> ValidationCheck:
         """Check if variable exists in NetCDF file."""
@@ -301,7 +323,15 @@ import sys
 try:
     import xarray as xr
     import pandas as pd
-    ds = xr.open_dataset("{path}")
+
+    def safe_open(path):
+        """Open dataset, trying decode_times=False if default fails."""
+        try:
+            return xr.open_dataset(path)
+        except Exception:
+            return xr.open_dataset(path, decode_times=False)
+
+    ds = safe_open("{path}")
     result = {{"success": True}}
     result["variables"] = list(ds.data_vars)
 
@@ -309,8 +339,12 @@ try:
     time_dims = ['time', 'Time', 'TIME', 't', 'date']
     for td in time_dims:
         if td in ds.dims or td in ds.coords:
-            time_vals = pd.to_datetime(ds[td].values)
-            result["time_range"] = [int(time_vals.year.min()), int(time_vals.year.max())]
+            try:
+                time_vals = pd.to_datetime(ds[td].values)
+                result["time_range"] = [int(time_vals.year.min()), int(time_vals.year.max())]
+            except Exception:
+                # If time conversion fails, try to extract year from raw values
+                pass
             break
 
     # Find lat/lon dimensions

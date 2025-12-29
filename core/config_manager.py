@@ -169,7 +169,7 @@ class ConfigManager:
             "statistics": general.get("statistics", False),
             "debug_mode": general.get("debug_mode", False),
             "only_drawing": general.get("only_drawing", False),
-            "weight": None if general.get("weight", "none").lower() == "none" else general.get("weight"),
+            "weight": "None" if general.get("weight", "none").lower() == "none" else general.get("weight"),
             "IGBP_groupby": general.get("IGBP_groupby", True),
             "PFT_groupby": general.get("PFT_groupby", True),
             "Climate_zone_groupby": general.get("Climate_zone_groupby", True),
@@ -214,19 +214,34 @@ class ConfigManager:
             YAML string
         """
         import copy
+        from core.path_utils import remote_join
+
         ref_data = copy.deepcopy(config.get("ref_data", {}))
 
-        # Convert all paths to absolute
+        # Check if in remote mode
+        general = config.get("general", {})
+        is_remote = general.get("execution_mode") == "remote"
+
+        # Convert all paths to absolute (only in local mode)
+        # In remote mode, paths are already remote paths and should not be converted
         if openbench_root is None:
             openbench_root = get_openbench_root()
-        ref_data = convert_paths_in_dict(ref_data, openbench_root)
+        if not is_remote:
+            ref_data = convert_paths_in_dict(ref_data, openbench_root)
 
         # Update def_nml paths to point to local copies
         if output_dir:
-            nml_dir = os.path.join(output_dir, "nml", "ref")
-            def_nml = ref_data.get("def_nml", {})
-            for source_name in def_nml:
-                def_nml[source_name] = os.path.join(nml_dir, f"{source_name}.yaml")
+            if is_remote:
+                # Use forward slashes for remote paths
+                nml_dir = remote_join(output_dir, "nml", "ref")
+                def_nml = ref_data.get("def_nml", {})
+                for source_name in def_nml:
+                    def_nml[source_name] = remote_join(nml_dir, f"{source_name}.yaml")
+            else:
+                nml_dir = os.path.join(output_dir, "nml", "ref")
+                def_nml = ref_data.get("def_nml", {})
+                for source_name in def_nml:
+                    def_nml[source_name] = os.path.join(nml_dir, f"{source_name}.yaml")
 
         return yaml.dump(
             ref_data,
@@ -250,19 +265,34 @@ class ConfigManager:
             YAML string
         """
         import copy
+        from core.path_utils import remote_join
+
         sim_data = copy.deepcopy(config.get("sim_data", {}))
 
-        # Convert all paths to absolute
+        # Check if in remote mode
+        general = config.get("general", {})
+        is_remote = general.get("execution_mode") == "remote"
+
+        # Convert all paths to absolute (only in local mode)
+        # In remote mode, paths are already remote paths and should not be converted
         if openbench_root is None:
             openbench_root = get_openbench_root()
-        sim_data = convert_paths_in_dict(sim_data, openbench_root)
+        if not is_remote:
+            sim_data = convert_paths_in_dict(sim_data, openbench_root)
 
         # Update def_nml paths to point to local copies
         if output_dir:
-            nml_dir = os.path.join(output_dir, "nml", "sim")
-            def_nml = sim_data.get("def_nml", {})
-            for source_name in def_nml:
-                def_nml[source_name] = os.path.join(nml_dir, f"{source_name}.yaml")
+            if is_remote:
+                # Use forward slashes for remote paths
+                nml_dir = remote_join(output_dir, "nml", "sim")
+                def_nml = sim_data.get("def_nml", {})
+                for source_name in def_nml:
+                    def_nml[source_name] = remote_join(nml_dir, f"{source_name}.yaml")
+            else:
+                nml_dir = os.path.join(output_dir, "nml", "sim")
+                def_nml = sim_data.get("def_nml", {})
+                for source_name in def_nml:
+                    def_nml[source_name] = os.path.join(nml_dir, f"{source_name}.yaml")
 
         return yaml.dump(
             sim_data,
@@ -606,14 +636,21 @@ class ConfigManager:
             if key in source_data:
                 top_level_var_mapping[key] = source_data[key]
 
-        # Include selected evaluation items
+        # Include selected evaluation items that exist in source_data (with type validation)
+        # Don't create entries for variables that don't exist in the source
         for item in selected_items:
             if item in source_data:
-                # Item already exists with its own data
-                filtered[item] = source_data[item].copy()
-            elif top_level_var_mapping:
-                # Use top-level variable mapping for this item
-                filtered[item] = top_level_var_mapping.copy()
+                # Item exists in source data
+                item_data = source_data[item]
+                if isinstance(item_data, dict):
+                    item_copy = item_data.copy()
+                    # Add top-level var mapping fields if not already present
+                    for key, value in top_level_var_mapping.items():
+                        if key not in item_copy:
+                            item_copy[key] = value
+                    filtered[item] = item_copy
+                elif item_data is not None:
+                    filtered[item] = item_data
 
         # Write the file
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -697,17 +734,21 @@ class ConfigManager:
 
             filtered["general"] = general
 
-        # Process per-variable configurations
+        # Process per-variable configurations (with type validation)
         for item in selected_items:
             if item in organized_data:
-                # Use the specific config for this variable
-                var_config = organized_data[item].copy()
+                item_data = organized_data[item]
+                if isinstance(item_data, dict):
+                    # Use the specific config for this variable
+                    var_config = item_data.copy()
 
-                # Remove per_var_time_range from output (it's only for UI control)
-                var_config.pop("per_var_time_range", None)
+                    # Remove per_var_time_range from output (it's only for UI control)
+                    var_config.pop("per_var_time_range", None)
 
-                if var_config:  # Only add if there's data
-                    filtered[item] = var_config
+                    if var_config:  # Only add if there's data
+                        filtered[item] = var_config
+                elif item_data is not None:
+                    filtered[item] = item_data
 
         # Write the file
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -776,12 +817,15 @@ class ConfigManager:
 
             filtered["general"] = general
 
-        # Keep only selected evaluation items
+        # Keep only selected evaluation items (with type validation)
         for item in selected_items:
             if item in content:
-                item_data = content[item].copy()
-                # sub_dir doesn't need path conversion (it's relative to root_dir)
-                filtered[item] = item_data
+                item_data = content[item]
+                if isinstance(item_data, dict):
+                    # sub_dir doesn't need path conversion (it's relative to root_dir)
+                    filtered[item] = item_data.copy()
+                elif item_data is not None:
+                    filtered[item] = item_data
 
         # Write filtered content
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -822,14 +866,18 @@ class ConfigManager:
         # Build filtered content
         filtered = {}
 
-        # Always keep general section
-        if "general" in content:
+        # Always keep general section (with type validation)
+        if "general" in content and isinstance(content["general"], dict):
             filtered["general"] = content["general"].copy()
 
-        # Keep only selected evaluation items
+        # Keep only selected evaluation items (with type validation)
         for item in selected_items:
             if item in content:
-                filtered[item] = content[item].copy()
+                item_data = content[item]
+                if isinstance(item_data, dict):
+                    filtered[item] = item_data.copy()
+                elif item_data is not None:
+                    filtered[item] = item_data
 
         # Write filtered content
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)

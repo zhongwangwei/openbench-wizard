@@ -443,17 +443,40 @@ class PageGeneral(BasePage):
         # Get basedir and convert to absolute path (without appending project name)
         basedir = general.get("basedir", "")
 
-        # Find OpenBench root directory
-        openbench_root = self._get_openbench_root()
+        # Check if in remote mode
+        is_remote = general.get("execution_mode") == "remote"
 
-        if not basedir or basedir == "./output":
-            # Set default to OpenBench/output (without project name)
-            basedir = os.path.join(openbench_root, "output")
-        elif not os.path.isabs(basedir):
-            # Convert relative path to absolute
-            if basedir.startswith("./"):
-                basedir = basedir[2:]
-            basedir = os.path.normpath(os.path.join(openbench_root, basedir))
+        if is_remote:
+            # Remote mode: use remote OpenBench path for defaults
+            remote_config = general.get("remote", {})
+            remote_openbench = remote_config.get("openbench_path", "")
+
+            if not basedir or basedir == "./output":
+                # Set default to remote OpenBench/output
+                if remote_openbench:
+                    basedir = f"{remote_openbench.rstrip('/')}/output"
+                else:
+                    basedir = "./output"
+            elif not basedir.startswith('/'):
+                # Convert relative path to absolute using remote root
+                if basedir.startswith("./"):
+                    basedir = basedir[2:]
+                if remote_openbench:
+                    basedir = f"{remote_openbench.rstrip('/')}/{basedir}"
+            # Normalize slashes for remote paths
+            basedir = basedir.replace('\\', '/')
+        else:
+            # Local mode: use local OpenBench root
+            openbench_root = self._get_openbench_root()
+
+            if not basedir or basedir == "./output":
+                # Set default to OpenBench/output (without project name)
+                basedir = os.path.join(openbench_root, "output")
+            elif not os.path.isabs(basedir):
+                # Convert relative path to absolute
+                if basedir.startswith("./"):
+                    basedir = basedir[2:]
+                basedir = os.path.normpath(os.path.join(openbench_root, basedir))
 
         # Set path without emitting signal to prevent save_to_config loop
         self.basedir_input.set_path(basedir, emit_signal=False)

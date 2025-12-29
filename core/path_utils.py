@@ -25,6 +25,70 @@ def to_posix_path(path: str) -> str:
     return path.replace('\\', '/')
 
 
+def remote_join(*parts) -> str:
+    """
+    Join path components using forward slashes (for remote Linux paths).
+
+    Use this instead of os.path.join() when constructing remote paths.
+
+    Args:
+        *parts: Path components to join
+
+    Returns:
+        Joined path with forward slashes
+    """
+    # Filter out empty parts and join with forward slashes
+    clean_parts = []
+    for i, part in enumerate(parts):
+        if not part:
+            continue
+        part = str(part).replace('\\', '/')
+        if i == 0:
+            # Keep leading slash for absolute paths
+            clean_parts.append(part.rstrip('/'))
+        else:
+            clean_parts.append(part.strip('/'))
+    return '/'.join(clean_parts)
+
+
+def remote_dirname(path: str) -> str:
+    """
+    Get the directory name of a remote path.
+
+    Use this instead of os.path.dirname() for remote paths.
+
+    Args:
+        path: Remote path
+
+    Returns:
+        Parent directory path
+    """
+    if not path:
+        return ""
+    path = to_posix_path(path).rstrip('/')
+    if '/' not in path:
+        return ""
+    return '/'.join(path.split('/')[:-1]) or '/'
+
+
+def remote_basename(path: str) -> str:
+    """
+    Get the base name of a remote path.
+
+    Use this instead of os.path.basename() for remote paths.
+
+    Args:
+        path: Remote path
+
+    Returns:
+        Base name (last component)
+    """
+    if not path:
+        return ""
+    path = to_posix_path(path).rstrip('/')
+    return path.split('/')[-1]
+
+
 def get_openbench_root() -> str:
     """
     Find the OpenBench root directory.

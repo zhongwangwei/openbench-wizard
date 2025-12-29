@@ -262,66 +262,186 @@ class PagePreview(BasePage):
     def _sync_namelists_for_remote(self, config: dict, local_dir: str, remote_dir: str, openbench_root: str):
         """Sync namelist files with remote paths."""
         import yaml
+        import shutil
+        from core.path_utils import remote_join
 
         nml_dir = os.path.join(local_dir, "nml")
         sim_nml_dir = os.path.join(nml_dir, "sim")
         ref_nml_dir = os.path.join(nml_dir, "ref")
+        sim_models_dir = os.path.join(sim_nml_dir, "models")
+
+        os.makedirs(sim_nml_dir, exist_ok=True)
+        os.makedirs(ref_nml_dir, exist_ok=True)
+        os.makedirs(sim_models_dir, exist_ok=True)
 
         eval_items = config.get("evaluation_items", {})
         selected_items = [k for k, v in eval_items.items() if v]
 
-        # Process simulation data namelists
+        # Process simulation data namelists - group by source_name
         sim_data = config.get("sim_data", {})
         sim_source_configs = sim_data.get("source_configs", {})
+
+        # Group configs by source_name
+        sim_grouped = {}
         for key, source_config in sim_source_configs.items():
             if "::" in key:
-                _, source_name = key.split("::", 1)
+                var_name, source_name = key.split("::", 1)
             else:
                 source_name = key
+                var_name = None
 
+            if source_name not in sim_grouped:
+                sim_grouped[source_name] = {"configs": [], "var_names": []}
+            sim_grouped[source_name]["configs"].append(source_config)
+            if var_name:
+                sim_grouped[source_name]["var_names"].append(var_name)
+
+        # Write grouped sim configs
+        for source_name, group_data in sim_grouped.items():
+            # Merge configs for the same source
+            merged_config = self._merge_source_configs(group_data["configs"], group_data["var_names"])
             dest_path = os.path.join(sim_nml_dir, f"{source_name}.yaml")
-            self._write_source_config_remote(source_config, dest_path, selected_items, openbench_root)
+            self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root)
 
-        # Process reference data namelists
+        # Copy model definition files for sim
+        sim_def_nml = sim_data.get("def_nml", {})
+        for source_name, model_path in sim_def_nml.items():
+            if model_path:
+                actual_path = self._resolve_model_path(model_path, openbench_root)
+                if actual_path and os.path.exists(actual_path):
+                    model_name = os.path.splitext(os.path.basename(actual_path))[0] + ".yaml"
+                    dest_path = os.path.join(sim_models_dir, model_name)
+                    self._copy_model_definition_filtered(actual_path, dest_path, selected_items)
+
+        # Process reference data namelists - group by source_name
         ref_data = config.get("ref_data", {})
         ref_source_configs = ref_data.get("source_configs", {})
+
+        # Group configs by source_name
+        ref_grouped = {}
         for key, source_config in ref_source_configs.items():
             if "::" in key:
-                _, source_name = key.split("::", 1)
+                var_name, source_name = key.split("::", 1)
             else:
                 source_name = key
+                var_name = None
 
+            if source_name not in ref_grouped:
+                ref_grouped[source_name] = {"configs": [], "var_names": []}
+            ref_grouped[source_name]["configs"].append(source_config)
+            if var_name:
+                ref_grouped[source_name]["var_names"].append(var_name)
+
+        # Write grouped ref configs
+        for source_name, group_data in ref_grouped.items():
+            # Merge configs for the same source
+            merged_config = self._merge_source_configs(group_data["configs"], group_data["var_names"])
             dest_path = os.path.join(ref_nml_dir, f"{source_name}.yaml")
-            self._write_source_config_remote(source_config, dest_path, selected_items, openbench_root)
+            self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root)
+
+    def _merge_source_configs(self, configs: list, var_names: list) -> dict:
+        """Merge multiple source configs into one."""
+        if not configs:
+            return {}
+
+        merged = {}
+
+        # Use the first config's general section
+        for cfg in configs:
+            if "general" in cfg and isinstance(cfg["general"], dict):
+                merged["general"] = cfg["general"].copy()
+                break
+
+        # Merge all variable-specific configs
+        for cfg, var_name in zip(configs, var_names or [None] * len(configs)):
+            for key, value in cfg.items():
+                if key in ("general", "_var_name", "def_nml_path"):
+                    continue
+                if isinstance(value, dict):
+                    merged[key] = value.copy()
+                else:
+                    merged[key] = value
+
+        return merged
+
+    def _resolve_model_path(self, model_path: str, openbench_root: str) -> str:
+        """Resolve model definition path, handling .nml to .yaml conversion."""
+        from core.path_utils import to_absolute_path
+
+        if not model_path:
+            return ""
+
+        # Convert to absolute path
+        abs_path = to_absolute_path(model_path, openbench_root)
+
+        # If file exists, return it
+        if os.path.exists(abs_path):
+            return abs_path
+
+        # Try .yaml extension if .nml was specified
+        if abs_path.endswith('.nml'):
+            yaml_path = abs_path[:-4] + '.yaml'
+            if os.path.exists(yaml_path):
+                return yaml_path
+
+        return ""
+
+    def _copy_model_definition_filtered(self, src_path: str, dest_path: str, selected_items: list):
+        """Copy model definition file with filtering for selected items."""
+        import yaml
+
+        try:
+            with open(src_path, 'r', encoding='utf-8') as f:
+                content = yaml.safe_load(f) or {}
+        except Exception:
+            return
+
+        # Filter to only include selected items
+        filtered = {}
+        for item in selected_items:
+            if item in content and isinstance(content[item], dict):
+                filtered[item] = content[item].copy()
+
+        if filtered:
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            with open(dest_path, 'w', encoding='utf-8') as f:
+                yaml.dump(filtered, f, default_flow_style=False, allow_unicode=True, sort_keys=False, indent=2)
 
     def _write_source_config_remote(self, source_data: dict, dest_path: str, selected_items: list, openbench_root: str):
         """Write source config file for remote execution."""
         import yaml
 
+        if not source_data:
+            return
+
         filtered = {}
 
         # Process general section
-        if "general" in source_data:
+        if "general" in source_data and isinstance(source_data["general"], dict):
             general = source_data["general"].copy()
             # Keep paths as-is (they should already be remote paths)
             filtered["general"] = general
 
-        # Include selected evaluation items
+        # Include selected evaluation items (with type validation)
         for item in selected_items:
             if item in source_data:
-                filtered[item] = source_data[item].copy()
+                item_data = source_data[item]
+                if isinstance(item_data, dict):
+                    filtered[item] = item_data.copy()
+                elif item_data is not None:
+                    # Handle non-dict values (e.g., strings or other types)
+                    filtered[item] = item_data
 
-        # Add var-specific fields from top level
+        # Add var-specific fields from top level to items that already exist in filtered
+        # (i.e., items that were found in source_data - don't create entries for non-existent variables)
         for field in ["sub_dir", "varname", "varunit", "prefix", "suffix"]:
-            if field in source_data and field not in filtered:
-                # Apply to all selected items that don't have this field
+            if field in source_data:
+                field_value = source_data[field]
+                # Only apply to items that already exist in filtered
                 for item in selected_items:
-                    if item not in filtered:
-                        filtered[item] = {}
-                    if field not in filtered.get(item, {}):
-                        if item not in filtered:
-                            filtered[item] = {}
-                        filtered[item][field] = source_data[field]
+                    if item in filtered and isinstance(filtered[item], dict):
+                        if field not in filtered[item]:
+                            filtered[item][field] = field_value
 
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         with open(dest_path, 'w', encoding='utf-8') as f:

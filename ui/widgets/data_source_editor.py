@@ -74,40 +74,53 @@ class DataSourceEditor(QDialog):
         """Check if we're in remote mode (SSH manager is set)."""
         return self._ssh_manager is not None
 
-    def _get_remote_project_root(self) -> str:
-        """Get the remote project root from the parent widget chain."""
+    def _get_remote_openbench_root(self) -> str:
+        """Get the remote OpenBench root path from the controller config."""
         try:
             # Try to get controller from parent widget chain
             parent = self.parent()
             while parent:
                 if hasattr(parent, 'controller'):
-                    return parent.controller.project_root or ""
+                    controller = parent.controller
+                    # Get remote OpenBench path from config
+                    remote_config = controller.config.get("general", {}).get("remote", {})
+                    remote_path = remote_config.get("openbench_path", "")
+                    if remote_path:
+                        return remote_path.rstrip('/').replace('\\', '/')
+                    # Fallback to project_root if available
+                    if hasattr(controller, 'project_root') and controller.project_root:
+                        return controller.project_root.rstrip('/').replace('\\', '/')
+                    break
                 parent = parent.parent()
         except Exception as e:
-            logger.debug("Failed to get remote project root: %s", e)
+            logger.debug("Failed to get remote OpenBench root: %s", e)
         return ""
 
     def _convert_path(self, path: str) -> str:
         """Convert relative path to absolute path.
 
-        In remote mode, relative paths are converted using remote project root.
+        In remote mode, relative paths are converted using remote OpenBench root.
         In local mode, relative paths are converted using local openbench_root.
         """
         if not path:
             return path
+
+        # Normalize slashes first
+        path = path.replace('\\', '/')
 
         # Check if already absolute
         if path.startswith('/'):
             return path
 
         if self._is_remote_mode():
-            # Remote mode: convert relative to absolute using remote project root
-            project_root = self._get_remote_project_root()
-            if project_root:
+            # Remote mode: convert relative to absolute using remote OpenBench root
+            remote_root = self._get_remote_openbench_root()
+            if remote_root:
                 # Handle ./ prefix
                 if path.startswith('./'):
                     path = path[2:]
-                return f"{project_root.rstrip('/')}/{path}"
+                return f"{remote_root}/{path}"
+            # If no remote root available, keep path as-is
             return path
         else:
             # Local mode: convert to absolute path
