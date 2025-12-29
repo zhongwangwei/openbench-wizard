@@ -623,6 +623,7 @@ class RemoteConfigWidget(QWidget):
         conda_layout.setSpacing(8)
         self.conda_combo = QComboBox()
         self.conda_combo.addItem("(Not using conda environment)")
+        self.conda_combo.currentIndexChanged.connect(self._on_conda_env_changed)
         self.conda_combo.currentTextChanged.connect(self._on_config_changed)
         conda_layout.addWidget(self.conda_combo, 1)
 
@@ -836,6 +837,44 @@ class RemoteConfigWidget(QWidget):
     def _on_config_changed(self):
         """Handle any configuration change."""
         self.config_changed.emit()
+
+    def _on_conda_env_changed(self, index: int):
+        """Handle conda environment selection change.
+
+        Updates the Python path to use the selected conda environment's Python.
+        """
+        if index <= 0:
+            # "(Not using conda environment)" selected, don't change Python path
+            return
+
+        env_name = self.conda_combo.currentText()
+        env_path = self.conda_combo.itemData(index)
+        if not env_name or not env_path:
+            return
+
+        # Get Python path directly from conda
+        if self._ssh_manager and self._ssh_manager.is_connected:
+            try:
+                # Use conda run to get the actual Python path
+                cmd = f"bash -i -l -c 'conda run -n {env_name} which python 2>/dev/null'"
+                stdout, _, exit_code = self._ssh_manager.execute(cmd, timeout=10)
+                if exit_code == 0 and stdout.strip():
+                    python_path = stdout.strip().split('\n')[-1]  # Get last line (actual path)
+                    if python_path and python_path.startswith('/'):
+                        idx = self.python_combo.findText(python_path)
+                        if idx < 0:
+                            self.python_combo.addItem(python_path)
+                        self.python_combo.setCurrentText(python_path)
+                        return
+            except Exception:
+                pass
+
+        # Fallback: construct path from env_path
+        python_path = f"{env_path}/bin/python"
+        idx = self.python_combo.findText(python_path)
+        if idx < 0:
+            self.python_combo.addItem(python_path)
+        self.python_combo.setCurrentText(python_path)
 
     def _update_remote_cpu_count(self):
         """Query remote server for CPU count and update label."""
