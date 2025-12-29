@@ -5,12 +5,10 @@ Project selector dialog for startup.
 """
 
 import os
-import yaml
-from typing import Optional, Tuple
+from typing import Optional
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QStackedWidget, QWidget,
-    QLineEdit, QMessageBox, QFileDialog, QGroupBox, QFormLayout
+    QStackedWidget, QWidget, QLineEdit, QMessageBox, QFileDialog, QGroupBox
 )
 from PySide6.QtCore import Qt, Signal
 
