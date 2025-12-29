@@ -80,6 +80,7 @@ class PageRuntime(BasePage):
         self.num_cores_spin = QSpinBox()
         self.num_cores_spin.setRange(1, 128)
         self.num_cores_spin.setValue(min(4, os.cpu_count() or 4))
+        self.num_cores_spin.setMinimumWidth(80)
         self.num_cores_spin.setToolTip("Number of CPU cores to use for parallel processing")
         self.num_cores_spin.valueChanged.connect(self._on_config_changed)
         cores_layout.addWidget(self.num_cores_spin)

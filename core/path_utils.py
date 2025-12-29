@@ -8,6 +8,23 @@ import sys
 from typing import Optional, Tuple
 
 
+def to_posix_path(path: str) -> str:
+    """
+    Convert a path to POSIX format (forward slashes).
+
+    Use this for paths that will be used on remote Linux servers.
+
+    Args:
+        path: Path string with any separators
+
+    Returns:
+        Path with forward slashes only
+    """
+    if not path:
+        return ""
+    return path.replace('\\', '/')
+
+
 def get_openbench_root() -> str:
     """
     Find the OpenBench root directory.

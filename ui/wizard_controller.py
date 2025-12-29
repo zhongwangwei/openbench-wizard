@@ -257,20 +257,37 @@ class WizardController(QObject):
         """Get the output directory path.
 
         Returns basedir/basename, avoiding duplication if basedir already ends with basename.
+        In remote mode, always uses forward slashes (POSIX paths).
         """
         general = self._config.get("general", {})
         basedir = general.get("basedir", "")
         basename = general.get("basename", "config")
+        is_remote = general.get("execution_mode") == "remote"
 
-        if basedir and os.path.isabs(basedir):
+        if basedir and (os.path.isabs(basedir) or basedir.startswith('/')):
             # Check if basedir already ends with basename to avoid duplication
-            if os.path.basename(basedir.rstrip(os.sep)) == basename:
-                return basedir
-            # Append basename to basedir
-            return os.path.join(basedir, basename)
-        # Use project root to construct output path
-        openbench_root = self._project_root or get_openbench_root()
-        return os.path.join(openbench_root, "output", basename)
+            # Use both separators for compatibility
+            basedir_stripped = basedir.rstrip('/').rstrip('\\')
+            basedir_basename = basedir_stripped.split('/')[-1].split('\\')[-1]
+            if basedir_basename == basename:
+                result = basedir
+            else:
+                # Append basename to basedir
+                if is_remote:
+                    # Remote mode: use forward slashes (POSIX)
+                    result = f"{basedir.rstrip('/')}/{basename}"
+                else:
+                    result = os.path.join(basedir, basename)
+        else:
+            # Use project root to construct output path
+            openbench_root = self._project_root or get_openbench_root()
+            result = os.path.join(openbench_root, "output", basename)
+
+        # In remote mode, ensure forward slashes
+        if is_remote:
+            result = result.replace('\\', '/')
+
+        return result
 
     def sync_namelists(self):
         """

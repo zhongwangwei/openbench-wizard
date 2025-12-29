@@ -184,8 +184,17 @@ class RemoteFileBrowser(QWidget):
         self.path_input.setText(path)
 
         try:
-            # List directory contents
-            cmd = f"ls -la {path} 2>/dev/null"
+            # First resolve the path in case it's a symlink
+            resolve_cmd = f"cd '{path}' 2>/dev/null && pwd -P"
+            stdout_resolve, _, exit_resolve = self._ssh_manager.execute(resolve_cmd, timeout=10)
+            if exit_resolve == 0 and stdout_resolve.strip():
+                resolved_path = stdout_resolve.strip()
+                self._current_path = resolved_path
+                self.path_input.setText(resolved_path)
+                path = resolved_path
+
+            # List directory contents with -L to follow symlinks for type detection
+            cmd = f"ls -la '{path}' 2>/dev/null"
             stdout, _, exit_code = self._ssh_manager.execute(cmd, timeout=10)
 
             if exit_code != 0:
@@ -194,7 +203,7 @@ class RemoteFileBrowser(QWidget):
             # Add parent directory entry
             if path != "/":
                 item = QListWidgetItem("📁 ..")
-                item.setData(Qt.UserRole, {"name": "..", "is_dir": True})
+                item.setData(Qt.UserRole, {"name": "..", "is_dir": True, "is_link": False})
                 self.file_list.addItem(item)
 
             # Parse ls output
@@ -208,21 +217,42 @@ class RemoteFileBrowser(QWidget):
                 perms = parts[0]
                 name = ' '.join(parts[8:])  # Handle filenames with spaces
 
-                if name in ['.', '..']:
+                # Handle symlink display (name -> target)
+                is_link = perms.startswith('l')
+                display_name = name
+                if is_link and ' -> ' in name:
+                    display_name = name.split(' -> ')[0]
+
+                if display_name in ['.', '..']:
                     continue
 
                 is_dir = perms.startswith('d')
-                is_exec = 'x' in perms and not is_dir
+                is_exec = 'x' in perms and not is_dir and not is_link
+
+                # For symlinks, check if target is a directory
+                if is_link:
+                    full_path = f"{path.rstrip('/')}/{display_name}"
+                    check_cmd = f"test -d '{full_path}' && echo 'dir'"
+                    check_stdout, _, check_exit = self._ssh_manager.execute(check_cmd, timeout=5)
+                    if check_exit == 0 and 'dir' in check_stdout:
+                        is_dir = True
 
                 if is_dir:
-                    icon = "📁"
+                    icon = "🔗" if is_link else "📁"
+                elif is_link:
+                    icon = "🔗"
                 elif is_exec:
-                    icon = "🐍" if 'python' in name.lower() else "⚡"
+                    icon = "🐍" if 'python' in display_name.lower() else "⚡"
                 else:
                     icon = "📄"
 
-                item = QListWidgetItem(f"{icon} {name}")
-                item.setData(Qt.UserRole, {"name": name, "is_dir": is_dir, "is_exec": is_exec})
+                item = QListWidgetItem(f"{icon} {display_name}")
+                item.setData(Qt.UserRole, {
+                    "name": display_name,
+                    "is_dir": is_dir,
+                    "is_exec": is_exec,
+                    "is_link": is_link
+                })
                 self.file_list.addItem(item)
 
         except Exception as e:
@@ -236,13 +266,16 @@ class RemoteFileBrowser(QWidget):
 
         name = data["name"]
         if data["is_dir"]:
-            # Navigate to directory
+            # Navigate to directory (use forward slashes for remote Linux paths)
             if name == "..":
-                new_path = os.path.dirname(self._current_path.rstrip('/'))
+                # Get parent directory
+                current = self._current_path.rstrip('/')
+                new_path = '/'.join(current.split('/')[:-1])
                 if not new_path:
                     new_path = "/"
             else:
-                new_path = os.path.join(self._current_path, name)
+                # Join paths with forward slash
+                new_path = f"{self._current_path.rstrip('/')}/{name}"
             self._load_directory(new_path)
         else:
             # Select file
@@ -265,7 +298,7 @@ class RemoteFileBrowser(QWidget):
                 if self._select_dirs:
                     # In directory mode, select directory or current path
                     if is_dir:
-                        full_path = os.path.join(self._current_path, data["name"])
+                        full_path = f"{self._current_path.rstrip('/')}/{data['name']}"
                     else:
                         # If file selected in dir mode, use current directory
                         full_path = self._current_path
@@ -273,7 +306,7 @@ class RemoteFileBrowser(QWidget):
                     self.parent().accept() if hasattr(self.parent(), 'accept') else None
                 elif not is_dir:
                     # In file mode, only allow file selection
-                    full_path = os.path.join(self._current_path, data["name"])
+                    full_path = f"{self._current_path.rstrip('/')}/{data['name']}"
                     self.file_selected.emit(full_path)
                     self.parent().accept() if hasattr(self.parent(), 'accept') else None
         elif self._select_dirs:
@@ -299,7 +332,7 @@ class RemoteFileBrowser(QWidget):
             if not folder_name:
                 return
 
-            new_path = os.path.join(self._current_path, folder_name)
+            new_path = f"{self._current_path.rstrip('/')}/{folder_name}"
             try:
                 cmd = f"mkdir -p '{new_path}'"
                 stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=10)
@@ -321,7 +354,7 @@ class RemoteFileBrowser(QWidget):
         if item:
             data = item.data(Qt.UserRole)
             if data:
-                return os.path.join(self._current_path, data["name"])
+                return f"{self._current_path.rstrip('/')}/{data['name']}"
         return ""
 
 

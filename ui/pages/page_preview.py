@@ -171,10 +171,14 @@ class PagePreview(BasePage):
             with tempfile.TemporaryDirectory() as temp_dir:
                 openbench_root = self._get_openbench_root()
 
+                # Get remote OpenBench path from remote config
+                remote_config = self.controller.config.get("general", {}).get("remote", {})
+                remote_openbench_path = remote_config.get("openbench_path", "")
+
                 # Generate config files with remote output_dir paths
                 # This ensures paths like reference_nml point to remote locations
                 files = self._export_for_remote(
-                    temp_dir, output_dir, openbench_root
+                    temp_dir, output_dir, openbench_root, remote_openbench_path
                 )
 
                 # Upload files to remote server
@@ -199,13 +203,15 @@ class PagePreview(BasePage):
             QMessageBox.critical(self, "Export Error", str(e))
             return False
 
-    def _export_for_remote(self, local_dir: str, remote_dir: str, openbench_root: str) -> dict:
+    def _export_for_remote(self, local_dir: str, remote_dir: str, openbench_root: str,
+                            remote_openbench_path: str = "") -> dict:
         """Export config files locally but with remote paths inside.
 
         Args:
             local_dir: Local directory to write files to
             remote_dir: Remote directory that paths should point to
-            openbench_root: OpenBench root directory (remote)
+            openbench_root: OpenBench root directory (local, for fallback)
+            remote_openbench_path: OpenBench installation path on remote server
 
         Returns:
             Dictionary of {file_type: local_file_path}
@@ -226,7 +232,9 @@ class PagePreview(BasePage):
 
         # Generate main config with remote paths
         remote_nml_dir = f"{remote_dir}/nml"
-        main_content = self.config_manager.generate_main_nml(config, openbench_root, remote_dir)
+        main_content = self.config_manager.generate_main_nml(
+            config, openbench_root, remote_dir, remote_openbench_path
+        )
         main_path = os.path.join(nml_dir, f"main-{basename}.yaml")
         with open(main_path, 'w', encoding='utf-8') as f:
             f.write(main_content)

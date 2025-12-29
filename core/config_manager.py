@@ -62,7 +62,8 @@ class ConfigManager:
             )
 
     def generate_main_nml(self, config: Dict[str, Any], openbench_root: Optional[str] = None,
-                          output_dir: Optional[str] = None) -> str:
+                          output_dir: Optional[str] = None,
+                          remote_openbench_path: Optional[str] = None) -> str:
         """
         Generate main NML YAML content.
 
@@ -70,6 +71,7 @@ class ConfigManager:
             config: Full configuration dictionary
             openbench_root: OpenBench root directory for generating absolute paths
             output_dir: Output directory path (for nml paths)
+            remote_openbench_path: Remote OpenBench installation path (for remote mode)
 
         Returns:
             YAML string
@@ -80,41 +82,69 @@ class ConfigManager:
         general = config.get("general", {})
         basename = general.get("basename", "config")
 
+        # Check if in remote mode
+        is_remote = general.get("execution_mode") == "remote"
+
         # Use provided output_dir, or compute from config
         if output_dir is None:
             basedir = general.get("basedir", "")
-            if basedir and os.path.isabs(basedir):
+            if basedir and (os.path.isabs(basedir) or basedir.startswith('/')):
                 # Normalize path to handle trailing slashes and multiple separators
-                normalized_basedir = os.path.normpath(basedir)
-                # Check if basedir already ends with basename to avoid duplication
-                if os.path.basename(normalized_basedir) == basename:
-                    output_dir = normalized_basedir
+                if is_remote:
+                    # Use forward slashes for remote paths
+                    normalized_basedir = basedir.rstrip('/').replace('\\', '/')
+                    basedir_basename = normalized_basedir.split('/')[-1]
+                    if basedir_basename == basename:
+                        output_dir = normalized_basedir
+                    else:
+                        output_dir = f"{normalized_basedir}/{basename}"
                 else:
-                    output_dir = os.path.normpath(os.path.join(normalized_basedir, basename))
+                    normalized_basedir = os.path.normpath(basedir)
+                    # Check if basedir already ends with basename to avoid duplication
+                    if os.path.basename(normalized_basedir) == basename:
+                        output_dir = normalized_basedir
+                    else:
+                        output_dir = os.path.normpath(os.path.join(normalized_basedir, basename))
             elif openbench_root:
                 output_dir = os.path.normpath(os.path.join(openbench_root, "output", basename))
             else:
                 output_dir = os.path.normpath(general.get("basedir", "./output"))
 
         # Generate absolute paths - ref and sim are in nml folder
-        nml_dir = os.path.normpath(os.path.join(output_dir, "nml"))
-        ref_nml_path = os.path.normpath(os.path.join(nml_dir, f"ref-{basename}.yaml"))
-        sim_nml_path = os.path.normpath(os.path.join(nml_dir, f"sim-{basename}.yaml"))
+        if is_remote:
+            # Use forward slashes for remote paths
+            output_dir = output_dir.replace('\\', '/')
+            nml_dir = f"{output_dir.rstrip('/')}/nml"
+            ref_nml_path = f"{nml_dir}/ref-{basename}.yaml"
+            sim_nml_path = f"{nml_dir}/sim-{basename}.yaml"
+        else:
+            nml_dir = os.path.normpath(os.path.join(output_dir, "nml"))
+            ref_nml_path = os.path.normpath(os.path.join(nml_dir, f"ref-{basename}.yaml"))
+            sim_nml_path = os.path.normpath(os.path.join(nml_dir, f"sim-{basename}.yaml"))
 
         # stats.yaml and figlib.yaml are always in the OpenBench installation directory
         # NOT in the project output directory - find them reliably
-        install_root = self._find_openbench_install_root(openbench_root)
-        if install_root:
-            stats_nml_path = os.path.join(install_root, "nml", "nml-yaml", "stats.yaml")
-            figure_nml_path = os.path.join(install_root, "nml", "nml-yaml", "figlib.yaml")
+        if is_remote and remote_openbench_path:
+            # Use remote OpenBench path with forward slashes
+            remote_ob = remote_openbench_path.rstrip('/').replace('\\', '/')
+            stats_nml_path = f"{remote_ob}/nml/nml-yaml/stats.yaml"
+            figure_nml_path = f"{remote_ob}/nml/nml-yaml/figlib.yaml"
         else:
-            # Fallback to relative paths if not found
-            stats_nml_path = "./nml/nml-yaml/stats.yaml"
-            figure_nml_path = "./nml/nml-yaml/figlib.yaml"
+            install_root = self._find_openbench_install_root(openbench_root)
+            if install_root:
+                stats_nml_path = os.path.join(install_root, "nml", "nml-yaml", "stats.yaml")
+                figure_nml_path = os.path.join(install_root, "nml", "nml-yaml", "figlib.yaml")
+            else:
+                # Fallback to relative paths if not found
+                stats_nml_path = "./nml/nml-yaml/stats.yaml"
+                figure_nml_path = "./nml/nml-yaml/figlib.yaml"
 
         # For OpenBench, basedir should be the PARENT directory, not including basename
         # Because OpenBench computes output path as: basedir/basename
-        parent_dir = os.path.dirname(output_dir.rstrip(os.sep))
+        if is_remote:
+            parent_dir = '/'.join(output_dir.rstrip('/').split('/')[:-1])
+        else:
+            parent_dir = os.path.dirname(output_dir.rstrip(os.sep))
 
         main_config["general"] = {
             "basename": basename,

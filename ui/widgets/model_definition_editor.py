@@ -3,6 +3,7 @@
 Dialog for creating and editing model definition files.
 """
 
+import logging
 import os
 import yaml
 from typing import Dict, Any, Optional
@@ -11,9 +12,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QTableWidget, QTableWidgetItem, QPushButton,
     QGroupBox, QDialogButtonBox, QFileDialog, QMessageBox,
-    QHeaderView, QLabel
+    QHeaderView, QLabel, QInputDialog
 )
 from PySide6.QtCore import Qt
+
+logger = logging.getLogger(__name__)
 
 
 # Common evaluation variables
@@ -51,12 +54,14 @@ class ModelDefinitionEditor(QDialog):
         self,
         initial_data: Optional[Dict[str, Any]] = None,
         file_path: Optional[str] = None,
+        ssh_manager=None,
         parent=None
     ):
         super().__init__(parent)
         self.initial_data = initial_data or {}
         self.file_path = file_path  # Path to existing file (for editing)
         self._saved_path = file_path or ""
+        self._ssh_manager = ssh_manager  # SSH manager for remote mode
 
         # Set title based on mode
         if file_path:
@@ -70,6 +75,10 @@ class ModelDefinitionEditor(QDialog):
 
         self._setup_ui()
         self._load_data()
+
+    def _is_remote_mode(self) -> bool:
+        """Check if we're in remote mode."""
+        return self._ssh_manager is not None and self._ssh_manager.is_connected
 
     def _setup_ui(self):
         """Setup dialog UI."""
@@ -205,27 +214,60 @@ class ModelDefinitionEditor(QDialog):
 
         data = self.get_data()
 
-        try:
-            with open(self.file_path, 'w', encoding='utf-8') as f:
-                yaml.dump(
-                    data,
-                    f,
-                    default_flow_style=False,
-                    allow_unicode=True,
-                    sort_keys=False,
-                    indent=2
-                )
-
-            self._saved_path = self.file_path
-            QMessageBox.information(
-                self,
-                "Success",
-                f"Model definition saved to:\n{self.file_path}"
+        if self._is_remote_mode():
+            # Save to remote server
+            yaml_content = yaml.dump(
+                data,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+                indent=2
             )
-            self.accept()
 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
+            try:
+                cmd = f"cat > '{self.file_path}' << 'YAML_EOF'\n{yaml_content}YAML_EOF"
+                stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=30)
+
+                if exit_code != 0:
+                    QMessageBox.critical(
+                        self, "Error",
+                        f"Failed to save file on remote server:\n{stderr or stdout}"
+                    )
+                    return
+
+                self._saved_path = self.file_path
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Model definition saved to remote server:\n{self.file_path}"
+                )
+                self.accept()
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
+        else:
+            # Save to local file
+            try:
+                with open(self.file_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(
+                        data,
+                        f,
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False,
+                        indent=2
+                    )
+
+                self._saved_path = self.file_path
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Model definition saved to:\n{self.file_path}"
+                )
+                self.accept()
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
 
     def _save_file(self):
         """Save model definition to a new file."""
@@ -237,6 +279,13 @@ class ModelDefinitionEditor(QDialog):
             QMessageBox.warning(self, "Error", "Please enter a model name.")
             return
 
+        if self._is_remote_mode():
+            self._save_file_remote(model_name)
+        else:
+            self._save_file_local(model_name)
+
+    def _save_file_local(self, model_name: str):
+        """Save model definition to a local file."""
         # Suggest default path
         default_dir = os.path.join(os.getcwd(), "nml", "nml-yaml", "Mod_variables_definition")
         os.makedirs(default_dir, exist_ok=True)
@@ -272,6 +321,79 @@ class ModelDefinitionEditor(QDialog):
                 self,
                 "Success",
                 f"Model definition saved to:\n{file_path}"
+            )
+            self.accept()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save file:\n{str(e)}")
+
+    def _save_file_remote(self, model_name: str):
+        """Save model definition to remote server."""
+        from ui.widgets.remote_config import RemoteFileBrowser
+
+        # Get remote home directory as default
+        try:
+            home_dir = self._ssh_manager._get_home_dir()
+        except Exception:
+            home_dir = "/"
+
+        # Let user select directory on remote server
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Save Location on Remote Server")
+        dialog.resize(500, 400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Add hint label
+        hint = QLabel(f"Select directory to save '{model_name}.yaml':")
+        layout.addWidget(hint)
+
+        browser = RemoteFileBrowser(self._ssh_manager, home_dir, dialog, select_dirs=True)
+        layout.addWidget(browser)
+
+        selected_path = [None]  # Use list to allow modification in nested function
+
+        def on_path_selected(path):
+            selected_path[0] = path
+            dialog.accept()
+
+        browser.file_selected.connect(on_path_selected)
+
+        if dialog.exec() != QDialog.Accepted or not selected_path[0]:
+            return
+
+        # Build full file path
+        remote_dir = selected_path[0].rstrip('/')
+        remote_file = f"{remote_dir}/{model_name}.yaml"
+
+        # Generate YAML content
+        data = self.get_data()
+        yaml_content = yaml.dump(
+            data,
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            indent=2
+        )
+
+        # Save to remote server
+        try:
+            # Create directory if needed and write file
+            cmd = f"mkdir -p '{remote_dir}' && cat > '{remote_file}' << 'YAML_EOF'\n{yaml_content}YAML_EOF"
+            stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=30)
+
+            if exit_code != 0:
+                QMessageBox.critical(
+                    self, "Error",
+                    f"Failed to save file on remote server:\n{stderr or stdout}"
+                )
+                return
+
+            self._saved_path = remote_file
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Model definition saved to remote server:\n{remote_file}"
             )
             self.accept()
 

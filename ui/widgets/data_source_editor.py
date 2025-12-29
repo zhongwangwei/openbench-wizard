@@ -353,6 +353,12 @@ class DataSourceEditor(QDialog):
             lambda: self._browse_remote_path(self.fulllist, "file")
         )
 
+        # Model definition (sim data only)
+        if self.source_type == "sim" and hasattr(self, 'model_nml'):
+            self.model_nml.set_custom_browse_handler(
+                lambda: self._browse_remote_path(self.model_nml, "file")
+            )
+
     def _browse_remote_path(self, path_selector, mode: str):
         """Browse remote server for path."""
         if not self._ssh_manager or not self._ssh_manager.is_connected:
@@ -818,41 +824,63 @@ class DataSourceEditor(QDialog):
             )
             return
 
+        content = None
+
         if self._is_remote_mode():
-            # Remote mode: editing remote files not supported directly
-            QMessageBox.information(
-                self, "Remote Mode",
-                "Editing remote model definition files is not supported.\n\n"
-                "Please edit the file directly on the remote server."
+            # Remote mode: load file from remote server
+            try:
+                stdout, stderr, exit_code = self._ssh_manager.execute(
+                    f"cat '{model_path}'", timeout=30
+                )
+                if exit_code != 0:
+                    QMessageBox.warning(
+                        self, "Load Error",
+                        f"Failed to load remote file:\n{model_path}\n\nError: {stderr}"
+                    )
+                    return
+                content = yaml.safe_load(stdout) or {}
+            except Exception as e:
+                QMessageBox.warning(
+                    self, "Load Error",
+                    f"Failed to load remote file:\n{str(e)}"
+                )
+                return
+
+            # Open editor with remote support
+            dialog = ModelDefinitionEditor(
+                initial_data=content,
+                file_path=model_path,
+                ssh_manager=self._ssh_manager,
+                parent=self
             )
-            return
+        else:
+            # Local mode: resolve path and edit
+            full_path = to_absolute_path(model_path, get_openbench_root())
 
-        # Local mode: resolve path and edit
-        full_path = to_absolute_path(model_path, get_openbench_root())
+            if not os.path.exists(full_path):
+                QMessageBox.warning(
+                    self, "File Not Found",
+                    f"Model definition file not found:\n{full_path}"
+                )
+                return
 
-        if not os.path.exists(full_path):
-            QMessageBox.warning(
-                self, "File Not Found",
-                f"Model definition file not found:\n{full_path}"
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = yaml.safe_load(f) or {}
+            except Exception as e:
+                QMessageBox.warning(
+                    self, "Load Error",
+                    f"Failed to load model file:\n{str(e)}"
+                )
+                return
+
+            # Open editor without remote support
+            dialog = ModelDefinitionEditor(
+                initial_data=content,
+                file_path=full_path,
+                parent=self
             )
-            return
 
-        try:
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = yaml.safe_load(f) or {}
-        except Exception as e:
-            QMessageBox.warning(
-                self, "Load Error",
-                f"Failed to load model file:\n{str(e)}"
-            )
-            return
-
-        # Open editor with existing data
-        dialog = ModelDefinitionEditor(
-            initial_data=content,
-            file_path=full_path,
-            parent=self
-        )
         dialog.exec()
         # Always refresh after dialog closes (user may have saved)
         self._on_model_changed(model_path, force=True)
@@ -1123,7 +1151,12 @@ class DataSourceEditor(QDialog):
     def _create_new_model(self):
         """Create a new model definition file."""
         from ui.widgets.model_definition_editor import ModelDefinitionEditor
-        dialog = ModelDefinitionEditor(parent=self)
+
+        # Pass ssh_manager for remote mode support
+        dialog = ModelDefinitionEditor(
+            ssh_manager=self._ssh_manager,
+            parent=self
+        )
         if dialog.exec():
             file_path = dialog.get_saved_path()
             if file_path:
