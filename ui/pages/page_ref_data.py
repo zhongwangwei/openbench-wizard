@@ -597,8 +597,11 @@ class PageRefData(BasePage):
         # Get general config
         general_config = self.controller.config.get("general", {})
 
-        # Check if remote mode
-        is_remote = general_config.get("execution_mode") == "remote"
+        # Check if remote mode - use storage-based check if available, otherwise fallback to config
+        if self.controller.storage is not None:
+            is_remote = self.controller.is_remote_mode()
+        else:
+            is_remote = general_config.get("execution_mode") == "remote"
         ssh_manager = get_remote_ssh_manager(self.controller) if is_remote else None
 
         if is_remote and not ssh_manager:
