@@ -4,11 +4,14 @@ Wizard flow controller - manages page navigation and visibility.
 """
 
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from PySide6.QtCore import QObject, Signal
 
 from core.config_manager import ConfigManager
 from core.path_utils import get_openbench_root
+
+if TYPE_CHECKING:
+    from core.storage import ProjectStorage
 
 
 class WizardController(QObject):
@@ -63,6 +66,7 @@ class WizardController(QObject):
         self._config_manager = ConfigManager()
         self._auto_sync_enabled = True
         self._ssh_manager = None  # SSH manager for remote mode
+        self._storage: Optional['ProjectStorage'] = None
 
     @property
     def project_root(self) -> str:
@@ -83,6 +87,21 @@ class WizardController(QObject):
     def ssh_manager(self, value):
         """Set SSH manager for remote mode."""
         self._ssh_manager = value
+
+    @property
+    def storage(self) -> Optional['ProjectStorage']:
+        """Get project storage instance."""
+        return self._storage
+
+    @storage.setter
+    def storage(self, value: Optional['ProjectStorage']):
+        """Set project storage instance."""
+        self._storage = value
+
+    def is_remote_mode(self) -> bool:
+        """Check if using remote storage."""
+        from core.storage import RemoteStorage
+        return isinstance(self._storage, RemoteStorage)
 
     def _default_config(self) -> Dict[str, Any]:
         """Return default configuration structure."""
@@ -304,21 +323,53 @@ class WizardController(QObject):
         if not basename:
             return  # No project name yet, skip sync
 
+        # Use storage if available
+        if self._storage:
+            self._sync_namelists_with_storage()
+        else:
+            # Fallback to file-based sync
+            output_dir = self.get_output_dir()
+            openbench_root = self._project_root or get_openbench_root()
+
+            try:
+                # Sync data source namelists
+                self._config_manager.sync_namelists(
+                    self._config, output_dir, openbench_root
+                )
+                # Also cleanup unused files
+                self._config_manager.cleanup_unused_namelists(self._config, output_dir)
+
+                # Save main config file to nml folder
+                self._save_main_config(output_dir, basename, openbench_root)
+            except Exception as e:
+                # Log error but don't crash
+                print(f"Warning: Failed to sync namelists: {e}")
+
+    def _sync_namelists_with_storage(self):
+        """Sync namelists using ProjectStorage."""
+        general = self._config.get("general", {})
+        basename = general.get("basename", "config")
         output_dir = self.get_output_dir()
         openbench_root = self._project_root or get_openbench_root()
 
-        try:
-            # Sync data source namelists
-            self._config_manager.sync_namelists(
-                self._config, output_dir, openbench_root
-            )
-            # Also cleanup unused files
-            self._config_manager.cleanup_unused_namelists(self._config, output_dir)
+        # Generate YAML content
+        main_content = self._config_manager.generate_main_nml(
+            self._config, openbench_root, output_dir
+        )
+        ref_content = self._config_manager.generate_ref_nml(
+            self._config, openbench_root, output_dir
+        )
+        sim_content = self._config_manager.generate_sim_nml(
+            self._config, openbench_root, output_dir
+        )
 
-            # Save main config file to nml folder
-            self._save_main_config(output_dir, basename, openbench_root)
+        # Write via storage
+        try:
+            self._storage.mkdir("nml")
+            self._storage.write_file(f"nml/main-{basename}.yaml", main_content)
+            self._storage.write_file(f"nml/ref-{basename}.yaml", ref_content)
+            self._storage.write_file(f"nml/sim-{basename}.yaml", sim_content)
         except Exception as e:
-            # Log error but don't crash
             print(f"Warning: Failed to sync namelists: {e}")
 
     def _save_main_config(self, output_dir: str, basename: str, openbench_root: str):
