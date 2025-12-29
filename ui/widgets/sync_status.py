@@ -161,5 +161,9 @@ class SyncStatusWidget(QWidget):
 
     def __del__(self):
         """Destructor - ensure timer is stopped."""
-        if hasattr(self, '_animation_timer') and self._animation_timer:
-            self._animation_timer.stop()
+        try:
+            if hasattr(self, '_animation_timer') and self._animation_timer:
+                self._animation_timer.stop()
+        except RuntimeError:
+            # Timer may already be deleted by Qt
+            pass
