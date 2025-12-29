@@ -352,9 +352,15 @@ class WizardController(QObject):
         output_dir = self.get_output_dir()
         openbench_root = self._project_root or get_openbench_root()
 
+        # Get remote OpenBench path if in remote mode
+        remote_openbench_path = None
+        if self.is_remote_mode():
+            remote_config = self._config.get("general", {}).get("remote", {})
+            remote_openbench_path = remote_config.get("openbench_path")
+
         # Generate YAML content
         main_content = self._config_manager.generate_main_nml(
-            self._config, openbench_root, output_dir
+            self._config, openbench_root, output_dir, remote_openbench_path
         )
         ref_content = self._config_manager.generate_ref_nml(
             self._config, openbench_root, output_dir
