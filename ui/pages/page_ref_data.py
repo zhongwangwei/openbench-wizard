@@ -607,8 +607,18 @@ class PageRefData(BasePage):
             )
             return
 
+        # Get remote OpenBench root for remote mode
+        remote_openbench_root = ""
+        if is_remote:
+            remote_config = general_config.get("remote", {})
+            remote_openbench_root = remote_config.get("openbench_path", "")
+
         # Create validator
-        validator = DataValidator(is_remote=is_remote, ssh_manager=ssh_manager)
+        validator = DataValidator(
+            is_remote=is_remote,
+            ssh_manager=ssh_manager,
+            remote_openbench_root=remote_openbench_root
+        )
 
         # Show progress dialog
         progress_dialog = ValidationProgressDialog(

@@ -99,7 +99,10 @@ class FilePathGenerator:
         suffix: str,
         data_groupby: str,
         syear: int,
-        eyear: int
+        eyear: int,
+        is_remote: bool = False,
+        ssh_manager=None,
+        remote_openbench_root: str = ""
     ):
         self.root_dir = root_dir
         self.sub_dir = sub_dir
@@ -108,19 +111,41 @@ class FilePathGenerator:
         self.data_groupby = data_groupby
         self.syear = syear
         self.eyear = eyear
+        self._is_remote = is_remote
+        self._ssh_manager = ssh_manager
+        self._remote_openbench_root = remote_openbench_root
 
     def _get_base_dir(self) -> str:
         """Get the base directory path (root_dir + sub_dir)."""
-        if self.sub_dir:
-            path = os.path.join(self.root_dir, self.sub_dir)
+        if self._is_remote:
+            # Remote mode: use forward slashes and remote root
+            root = self.root_dir.replace('\\', '/')
+            if self.sub_dir:
+                sub = self.sub_dir.replace('\\', '/')
+                path = f"{root.rstrip('/')}/{sub.lstrip('/')}"
+            else:
+                path = root
+
+            # Convert relative path to absolute using remote OpenBench root
+            if not path.startswith('/') and self._remote_openbench_root:
+                if path.startswith('./'):
+                    path = path[2:]
+                path = f"{self._remote_openbench_root.rstrip('/')}/{path}"
+            return path
         else:
-            path = self.root_dir
-        # Convert to absolute path using OpenBench root as base
-        return to_absolute_path(path, get_openbench_root())
+            # Local mode
+            if self.sub_dir:
+                path = os.path.join(self.root_dir, self.sub_dir)
+            else:
+                path = self.root_dir
+            # Convert to absolute path using OpenBench root as base
+            return to_absolute_path(path, get_openbench_root())
 
     def _build_path(self, filename: str) -> str:
         """Build full path with root_dir and sub_dir."""
         base_dir = self._get_base_dir()
+        if self._is_remote:
+            return f"{base_dir.rstrip('/')}/{filename}"
         return os.path.join(base_dir, filename)
 
     def get_sample_paths(self) -> List[str]:
@@ -129,8 +154,6 @@ class FilePathGenerator:
         Uses glob pattern to find actual files matching prefix and suffix.
         Returns a small set of representative paths to check.
         """
-        import glob
-
         base_dir = self._get_base_dir()
 
         if self.data_groupby == "Single":
@@ -140,8 +163,16 @@ class FilePathGenerator:
 
         # For Year/Month/Day, use glob to find matching files
         # Pattern: {prefix}*{suffix}.nc
-        pattern = os.path.join(base_dir, f"{self.prefix}*{self.suffix}.nc")
-        matching_files = sorted(glob.glob(pattern))
+        pattern = f"{self.prefix}*{self.suffix}.nc"
+
+        if self._is_remote and self._ssh_manager:
+            # Remote mode: use SSH to list files
+            matching_files = self._remote_glob(base_dir, pattern)
+        else:
+            # Local mode: use local glob
+            import glob
+            full_pattern = os.path.join(base_dir, pattern)
+            matching_files = sorted(glob.glob(full_pattern))
 
         if matching_files:
             # Return first, middle, and last file as samples
@@ -155,6 +186,18 @@ class FilePathGenerator:
 
         # If no files found via glob, return empty list
         # The validation will report "no files found"
+        return []
+
+    def _remote_glob(self, base_dir: str, pattern: str) -> List[str]:
+        """Find files matching pattern on remote server via SSH."""
+        try:
+            # Use find command to match files
+            cmd = f"find '{base_dir}' -maxdepth 1 -name '{pattern}' -type f 2>/dev/null | sort"
+            stdout, stderr, exit_code = self._ssh_manager.execute(cmd, timeout=30)
+            if exit_code == 0 and stdout.strip():
+                return [line.strip() for line in stdout.strip().split('\n') if line.strip()]
+        except Exception:
+            pass
         return []
 
 
@@ -472,17 +515,26 @@ except Exception as e:
 
 
 class DataValidator:
-    """Main validator that orchestrates validation checks."""
+    """Main validator that orchestrates validation checks.
 
-    def __init__(self, is_remote: bool = False, ssh_manager=None):
+    Note: The is_remote parameter determines the validation METHOD (local xarray vs SSH),
+    not storage abstraction. This is intentionally separate from ProjectStorage because
+    validation requires actual file access/inspection which differs fundamentally between
+    local filesystem (xarray) and remote execution (SSH + Python script).
+    """
+
+    def __init__(self, is_remote: bool = False, ssh_manager=None, remote_openbench_root: str = ""):
         """Initialize validator.
 
         Args:
-            is_remote: If True, use remote validation via SSH
+            is_remote: If True, use remote validation via SSH. This determines how
+                      files are accessed for validation, not storage abstraction.
             ssh_manager: SSHManager instance (required if is_remote=True)
+            remote_openbench_root: Remote OpenBench root path (for remote mode)
         """
         self._is_remote = is_remote
         self._ssh_manager = ssh_manager
+        self._remote_openbench_root = remote_openbench_root
 
         if is_remote and ssh_manager:
             self._validator = RemoteNetCDFValidator(ssh_manager)
@@ -539,7 +591,10 @@ class DataValidator:
             suffix=suffix,
             data_groupby=data_groupby,
             syear=syear,
-            eyear=eyear
+            eyear=eyear,
+            is_remote=self._is_remote,
+            ssh_manager=self._ssh_manager,
+            remote_openbench_root=self._remote_openbench_root
         )
         sample_paths = path_gen.get_sample_paths()
 

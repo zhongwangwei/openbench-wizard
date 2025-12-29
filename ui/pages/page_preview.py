@@ -30,9 +30,14 @@ def get_remote_ssh_manager(controller):
     Returns:
         SSHManager instance if in remote mode and connected, None otherwise
     """
-    general = controller.config.get("general", {})
-    if general.get("execution_mode") != "remote":
-        return None
+    # Use controller's is_remote_mode() if storage is set, otherwise fall back to config check
+    if controller.storage is not None:
+        if not controller.is_remote_mode():
+            return None
+    else:
+        general = controller.config.get("general", {})
+        if general.get("execution_mode") != "remote":
+            return None
     return controller.ssh_manager
 
 
@@ -107,11 +112,16 @@ class PagePreview(BasePage):
             QMessageBox.warning(self, "Validation Failed", error_msg)
             return False
 
-        # Check if in remote mode
-        general = self.controller.config.get("general", {})
-        is_remote = general.get("execution_mode") == "remote"
+        # Check if in remote mode - use storage-based check if available, otherwise config
+        if self.controller.storage is not None:
+            is_remote = self.controller.is_remote_mode()
+        else:
+            general = self.controller.config.get("general", {})
+            is_remote = general.get("execution_mode") == "remote"
 
         if is_remote:
+            # TODO: Refactor to use ProjectStorage interface for unified export
+            # Currently uses direct SSH/SFTP operations
             return self._export_and_run_remote(output_dir)
         else:
             return self._export_and_run_local(output_dir)
@@ -345,11 +355,22 @@ class PagePreview(BasePage):
             self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root)
 
     def _merge_source_configs(self, configs: list, var_names: list) -> dict:
-        """Merge multiple source configs into one."""
+        """Merge multiple source configs into one.
+
+        Creates a structure like:
+        {
+            "general": {...},
+            "Latent_Heat": {"sub_dir": ..., "varname": ..., ...},
+            "Sensible_Heat": {"sub_dir": ..., "varname": ..., ...},
+        }
+
+        Consistent with local mode _copy_data_namelists organization.
+        """
         if not configs:
             return {}
 
         merged = {}
+        var_mapping_keys = ["sub_dir", "varname", "varunit", "prefix", "suffix"]
 
         # Use the first config's general section
         for cfg in configs:
@@ -357,15 +378,34 @@ class PagePreview(BasePage):
                 merged["general"] = cfg["general"].copy()
                 break
 
-        # Merge all variable-specific configs
+        # Create per-variable entries from each config
         for cfg, var_name in zip(configs, var_names or [None] * len(configs)):
-            for key, value in cfg.items():
-                if key in ("general", "_var_name", "def_nml_path"):
-                    continue
-                if isinstance(value, dict):
-                    merged[key] = value.copy()
-                else:
-                    merged[key] = value
+            if not var_name:
+                continue
+
+            # Build variable-specific config from top-level fields
+            var_config = {}
+            for key in var_mapping_keys:
+                if key in cfg:
+                    var_config[key] = cfg[key]
+
+            # Also check if there's already a variable entry in the config
+            if var_name in cfg and isinstance(cfg[var_name], dict):
+                # Merge with existing variable config
+                for k, v in cfg[var_name].items():
+                    var_config[k] = v
+
+            # Handle per-variable time range settings (consistent with local mode)
+            general = cfg.get("general", {})
+            if general.get("per_var_time_range"):
+                var_config["per_var_time_range"] = True
+                if "syear" in general and general["syear"] != "":
+                    var_config["syear"] = general["syear"]
+                if "eyear" in general and general["eyear"] != "":
+                    var_config["eyear"] = general["eyear"]
+
+            if var_config:
+                merged[var_name] = var_config
 
         return merged
 
@@ -445,8 +485,19 @@ class PagePreview(BasePage):
                 yaml.dump(filtered, f, default_flow_style=False, allow_unicode=True, sort_keys=False, indent=2)
 
     def _write_source_config_remote(self, source_data: dict, dest_path: str, selected_items: list, openbench_root: str):
-        """Write source config file for remote execution."""
+        """Write source config file for remote execution.
+
+        Expects source_data to have structure:
+        {
+            "general": {...},
+            "Latent_Heat": {"sub_dir": ..., "varname": ..., ...},
+            "Sensible_Heat": {"sub_dir": ..., "varname": ..., ...},
+        }
+
+        Output is consistent with local mode _write_source_config_organized.
+        """
         import yaml
+        from core.path_utils import remote_join
 
         if not source_data:
             return
@@ -456,29 +507,49 @@ class PagePreview(BasePage):
         # Process general section
         if "general" in source_data and isinstance(source_data["general"], dict):
             general = source_data["general"].copy()
-            # Keep paths as-is (they should already be remote paths)
+
+            # Update model_namelist path to point to models subdirectory (consistent with local mode)
+            if "model_namelist" in general and general["model_namelist"]:
+                model_path = general["model_namelist"]
+                model_basename = model_path.rstrip('/').split('/')[-1]
+                model_basename = os.path.splitext(model_basename)[0]
+                dest_dir = dest_path.rsplit('/', 1)[0] if '/' in dest_path else os.path.dirname(dest_path)
+                models_dir = remote_join(dest_dir, "models")
+                general["model_namelist"] = remote_join(models_dir, model_basename + ".yaml")
+
+            # Remove UI-only field from output
+            general.pop("per_var_time_range", None)
+
+            # Check if any variable has per_var_time_range enabled
+            any_per_var = any(
+                source_data.get(item, {}).get("per_var_time_range", False)
+                for item in selected_items
+                if isinstance(source_data.get(item), dict)
+            )
+
+            # If any variable uses per-variable time range, remove from general
+            if any_per_var:
+                general.pop("syear", None)
+                general.pop("eyear", None)
+
             filtered["general"] = general
 
-        # Include selected evaluation items (with type validation)
+        # Include selected evaluation items that exist in source_data
         for item in selected_items:
             if item in source_data:
                 item_data = source_data[item]
                 if isinstance(item_data, dict):
-                    filtered[item] = item_data.copy()
+                    var_config = item_data.copy()
+                    # Remove per_var_time_range from output (it's only for UI control)
+                    var_config.pop("per_var_time_range", None)
+                    if var_config:  # Only add if there's data
+                        filtered[item] = var_config
                 elif item_data is not None:
-                    # Handle non-dict values (e.g., strings or other types)
                     filtered[item] = item_data
 
-        # Add var-specific fields from top level to items that already exist in filtered
-        # (i.e., items that were found in source_data - don't create entries for non-existent variables)
-        for field in ["sub_dir", "varname", "varunit", "prefix", "suffix"]:
-            if field in source_data:
-                field_value = source_data[field]
-                # Only apply to items that already exist in filtered
-                for item in selected_items:
-                    if item in filtered and isinstance(filtered[item], dict):
-                        if field not in filtered[item]:
-                            filtered[item][field] = field_value
+        # Don't write empty files (only general, no variables)
+        if len(filtered) <= 1:
+            return
 
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         with open(dest_path, 'w', encoding='utf-8') as f:
