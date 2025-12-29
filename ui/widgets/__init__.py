@@ -8,6 +8,7 @@ from ui.widgets.progress_dashboard import ProgressDashboard, TaskStatus, TaskInf
 from ui.widgets.data_source_editor import DataSourceEditor
 from ui.widgets.model_definition_editor import ModelDefinitionEditor
 from ui.widgets.remote_config import RemoteConfigWidget
+from ui.widgets.sync_status import SyncStatusWidget
 
 __all__ = [
     "PathSelector",
@@ -19,4 +20,5 @@ __all__ = [
     "DataSourceEditor",
     "ModelDefinitionEditor",
     "RemoteConfigWidget",
+    "SyncStatusWidget",
 ]
