@@ -9,6 +9,7 @@ from ui.widgets.data_source_editor import DataSourceEditor
 from ui.widgets.model_definition_editor import ModelDefinitionEditor
 from ui.widgets.remote_config import RemoteConfigWidget
 from ui.widgets.sync_status import SyncStatusWidget
+from ui.widgets.path_completer import PathCompleter
 
 __all__ = [
     "PathSelector",
@@ -21,4 +22,5 @@ __all__ = [
     "ModelDefinitionEditor",
     "RemoteConfigWidget",
     "SyncStatusWidget",
+    "PathCompleter",
 ]
