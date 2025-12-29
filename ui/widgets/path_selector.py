@@ -4,12 +4,18 @@ Path selector widget with browse button and drag-drop support.
 """
 
 import os
+from typing import Optional, TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLineEdit, QPushButton, QFileDialog
 )
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
+
+if TYPE_CHECKING:
+    from core.storage import ProjectStorage
+
+from ui.widgets.path_completer import PathCompleter
 
 
 class PathSelector(QWidget):
@@ -23,7 +29,8 @@ class PathSelector(QWidget):
         mode: str = "directory",
         filter: str = "",
         placeholder: str = "",
-        parent=None
+        parent=None,
+        storage: Optional['ProjectStorage'] = None
     ):
         """
         Initialize PathSelector.
@@ -33,6 +40,7 @@ class PathSelector(QWidget):
             filter: File filter for file mode (e.g., "YAML Files (*.yaml)")
             placeholder: Placeholder text for the input field
             parent: Parent widget
+            storage: Optional ProjectStorage for autocomplete support
         """
         super().__init__(parent)
         self.mode = mode
@@ -41,11 +49,19 @@ class PathSelector(QWidget):
         self._custom_browse_handler = None
         self._skip_validation = False  # Skip path existence validation (for remote mode)
 
+        # Autocomplete support
+        self._storage: Optional['ProjectStorage'] = storage
+        self._completer: Optional[PathCompleter] = None
+
         self._setup_ui(placeholder)
         self._connect_signals()
 
         # Enable drag and drop
         self.setAcceptDrops(True)
+
+        # Setup completer if storage is provided
+        if storage:
+            self._setup_completer(storage)
 
     def _setup_ui(self, placeholder: str):
         """Setup the widget UI."""
@@ -192,3 +208,38 @@ class PathSelector(QWidget):
         """Set the starting directory for the file dialog."""
         if os.path.isdir(dir_path):
             self._last_dir = dir_path
+
+    def _setup_completer(self, storage: 'ProjectStorage'):
+        """Setup path autocomplete.
+
+        Args:
+            storage: ProjectStorage instance for path completion
+        """
+        self._completer = PathCompleter(storage, self)
+        self.line_edit.setCompleter(self._completer)
+        self.line_edit.textChanged.connect(self._on_text_for_completion)
+
+    def _on_text_for_completion(self, text: str):
+        """Trigger completion update when text changes.
+
+        Args:
+            text: Current text in the line edit
+        """
+        if self._completer:
+            self._completer.update_completions(text)
+
+    def set_storage(self, storage: Optional['ProjectStorage']):
+        """Set storage backend for autocomplete.
+
+        Args:
+            storage: ProjectStorage instance to enable autocomplete,
+                    or None to disable autocomplete
+        """
+        self._storage = storage
+        if storage:
+            if not self._completer:
+                self._setup_completer(storage)
+            else:
+                self._completer.set_storage(storage)
+        elif self._completer:
+            self._completer.set_storage(None)
