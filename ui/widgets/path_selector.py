@@ -217,6 +217,11 @@ class PathSelector(QWidget):
         """
         self._completer = PathCompleter(storage, self)
         self.line_edit.setCompleter(self._completer)
+        # Disconnect first to avoid duplicate connections
+        try:
+            self.line_edit.textChanged.disconnect(self._on_text_for_completion)
+        except RuntimeError:
+            pass  # Not connected yet
         self.line_edit.textChanged.connect(self._on_text_for_completion)
 
     def _on_text_for_completion(self, text: str):
