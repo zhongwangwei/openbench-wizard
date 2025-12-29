@@ -4,7 +4,6 @@
 Path autocomplete for storage-backed path input.
 """
 
-import os
 from typing import Optional, List
 from PySide6.QtWidgets import QCompleter
 from PySide6.QtCore import Qt, QStringListModel, QTimer
@@ -19,7 +18,6 @@ class PathCompleterModel(QStringListModel):
         super().__init__(parent)
         self._storage = storage
         self._cache: dict = {}
-        self._base_path = ""
 
     def set_storage(self, storage: Optional[ProjectStorage]):
         """Set the storage backend."""
@@ -42,8 +40,7 @@ class PathCompleterModel(QStringListModel):
 
         # Get directory part and prefix
         if '/' in text:
-            dir_part = text.rsplit('/', 1)[0]
-            prefix = text.rsplit('/', 1)[1] if '/' in text else text
+            dir_part, prefix = text.rsplit('/', 1)
         else:
             dir_part = ""
             prefix = text
@@ -70,10 +67,14 @@ class PathCompleterModel(QStringListModel):
                 completions.append(full_path)
 
         # Sort: directories first, then files
-        completions.sort(key=lambda x: (not x.endswith('/'), x.lower()))
+        completions.sort(key=str.lower)
 
         self.setStringList(completions)
         return completions
+
+    def clear_cache(self):
+        """Clear the completion cache."""
+        self._cache.clear()
 
 
 class PathCompleter(QCompleter):
@@ -116,4 +117,4 @@ class PathCompleter(QCompleter):
 
     def clear_cache(self):
         """Clear the completion cache."""
-        self._model._cache.clear()
+        self._model.clear_cache()
