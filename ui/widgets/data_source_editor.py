@@ -358,6 +358,10 @@ class DataSourceEditor(QDialog):
         if not self._ssh_manager:
             return
 
+        # Skip local path validation for remote paths (they won't exist locally)
+        self.root_dir.set_skip_validation(True)
+        self.fulllist.set_skip_validation(True)
+
         # Set custom browse handlers for PathSelector widgets
         self.root_dir.set_custom_browse_handler(
             lambda: self._browse_remote_path(self.root_dir, "directory")
@@ -368,6 +372,7 @@ class DataSourceEditor(QDialog):
 
         # Model definition (sim data only)
         if self.source_type == "sim" and hasattr(self, 'model_nml'):
+            self.model_nml.set_skip_validation(True)
             self.model_nml.set_custom_browse_handler(
                 lambda: self._browse_remote_path(self.model_nml, "file")
             )

@@ -481,6 +481,9 @@ class PageGeneral(BasePage):
         # Set path without emitting signal to prevent save_to_config loop
         self.basedir_input.set_path(basedir, emit_signal=False)
 
+        # Skip local path validation in remote mode (remote paths won't exist locally)
+        self.basedir_input.set_skip_validation(is_remote)
+
         self.syear_spin.setValue(general.get("syear", 2000))
         self.eyear_spin.setValue(general.get("eyear", 2020))
         self.min_year_spin.setValue(general.get("min_year", 1.0))

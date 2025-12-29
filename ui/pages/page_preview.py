@@ -274,6 +274,9 @@ class PagePreview(BasePage):
         os.makedirs(ref_nml_dir, exist_ok=True)
         os.makedirs(sim_models_dir, exist_ok=True)
 
+        # Get SSH manager for remote file reading
+        ssh_manager = get_remote_ssh_manager(self.controller)
+
         eval_items = config.get("evaluation_items", {})
         selected_items = [k for k, v in eval_items.items() if v]
 
@@ -303,15 +306,17 @@ class PagePreview(BasePage):
             dest_path = os.path.join(sim_nml_dir, f"{source_name}.yaml")
             self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root)
 
-        # Copy model definition files for sim
+        # Copy model definition files for sim (read from remote server)
         sim_def_nml = sim_data.get("def_nml", {})
         for source_name, model_path in sim_def_nml.items():
             if model_path:
-                actual_path = self._resolve_model_path(model_path, openbench_root)
-                if actual_path and os.path.exists(actual_path):
-                    model_name = os.path.splitext(os.path.basename(actual_path))[0] + ".yaml"
+                actual_path = self._resolve_model_path(model_path, openbench_root, is_remote=True)
+                if actual_path:
+                    # Extract model name from path
+                    model_basename = actual_path.rstrip('/').split('/')[-1]
+                    model_name = os.path.splitext(model_basename)[0] + ".yaml"
                     dest_path = os.path.join(sim_models_dir, model_name)
-                    self._copy_model_definition_filtered(actual_path, dest_path, selected_items)
+                    self._copy_model_definition_filtered(actual_path, dest_path, selected_items, is_remote=True, ssh_manager=ssh_manager)
 
         # Process reference data namelists - group by source_name
         ref_data = config.get("ref_data", {})
@@ -364,14 +369,24 @@ class PagePreview(BasePage):
 
         return merged
 
-    def _resolve_model_path(self, model_path: str, openbench_root: str) -> str:
+    def _resolve_model_path(self, model_path: str, openbench_root: str, is_remote: bool = False) -> str:
         """Resolve model definition path, handling .nml to .yaml conversion."""
         from core.path_utils import to_absolute_path
 
         if not model_path:
             return ""
 
-        # Convert to absolute path
+        if is_remote:
+            # In remote mode, just normalize the path (don't check local existence)
+            # The path is already a remote path
+            path = model_path.replace('\\', '/')
+            if not path.startswith('/') and openbench_root:
+                if path.startswith('./'):
+                    path = path[2:]
+                path = f"{openbench_root.rstrip('/')}/{path}"
+            return path
+
+        # Local mode: Convert to absolute path
         abs_path = to_absolute_path(model_path, openbench_root)
 
         # If file exists, return it
@@ -386,14 +401,36 @@ class PagePreview(BasePage):
 
         return ""
 
-    def _copy_model_definition_filtered(self, src_path: str, dest_path: str, selected_items: list):
+    def _copy_model_definition_filtered(self, src_path: str, dest_path: str, selected_items: list, is_remote: bool = False, ssh_manager=None):
         """Copy model definition file with filtering for selected items."""
         import yaml
 
-        try:
-            with open(src_path, 'r', encoding='utf-8') as f:
-                content = yaml.safe_load(f) or {}
-        except Exception:
+        content = {}
+
+        if is_remote and ssh_manager:
+            # Read from remote server via SSH
+            try:
+                # Try .yaml first, then .nml
+                paths_to_try = [src_path]
+                if src_path.endswith('.nml'):
+                    paths_to_try.insert(0, src_path[:-4] + '.yaml')
+
+                for path in paths_to_try:
+                    stdout, stderr, exit_code = ssh_manager.execute(f"cat '{path}' 2>/dev/null", timeout=30)
+                    if exit_code == 0 and stdout.strip():
+                        content = yaml.safe_load(stdout) or {}
+                        break
+            except Exception:
+                return
+        else:
+            # Read from local file
+            try:
+                with open(src_path, 'r', encoding='utf-8') as f:
+                    content = yaml.safe_load(f) or {}
+            except Exception:
+                return
+
+        if not content:
             return
 
         # Filter to only include selected items

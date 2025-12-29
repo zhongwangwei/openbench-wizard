@@ -39,6 +39,7 @@ class PathSelector(QWidget):
         self.filter = filter or "All Files (*)"
         self._last_dir = os.path.expanduser("~")
         self._custom_browse_handler = None
+        self._skip_validation = False  # Skip path existence validation (for remote mode)
 
         self._setup_ui(placeholder)
         self._connect_signals()
@@ -108,7 +109,8 @@ class PathSelector(QWidget):
     def _on_text_changed(self, text: str):
         """Handle text changes."""
         # Update line edit style based on path validity
-        if text:
+        # Skip validation if _skip_validation is True (for remote paths)
+        if text and not self._skip_validation:
             exists = os.path.exists(text)
             if self.mode == "directory":
                 valid = exists and os.path.isdir(text)
@@ -123,6 +125,18 @@ class PathSelector(QWidget):
             self.line_edit.setStyleSheet("")
 
         self.path_changed.emit(text)
+
+    def set_skip_validation(self, skip: bool):
+        """Set whether to skip path existence validation.
+
+        Use this for remote paths that don't exist locally.
+
+        Args:
+            skip: If True, don't validate path existence
+        """
+        self._skip_validation = skip
+        # Re-trigger validation update
+        self._on_text_changed(self.line_edit.text())
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Handle drag enter event."""
