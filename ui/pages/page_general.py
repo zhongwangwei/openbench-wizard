@@ -251,10 +251,11 @@ class PageGeneral(BasePage):
 
     def _browse_output_directory(self):
         """Handle output directory browse - uses remote browser if in remote mode."""
-        general = self.controller.config.get("general", {})
-        execution_mode = general.get("execution_mode", "local")
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
 
-        if execution_mode == "remote":
+        if is_remote:
             # Use remote file browser
             self._browse_remote_directory()
         else:
@@ -373,11 +374,11 @@ class PageGeneral(BasePage):
         # Use controller.get_output_dir() to get the proper output path (basedir/basename)
         output_dir = self.controller.get_output_dir()
 
-        # Check if remote mode
-        general = self.controller.config.get("general", {})
-        execution_mode = general.get("execution_mode", "local")
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
 
-        if execution_mode == "remote":
+        if is_remote:
             # Create directories on remote server
             self._create_remote_project_folder(output_dir)
         else:
@@ -443,8 +444,9 @@ class PageGeneral(BasePage):
         # Get basedir and convert to absolute path (without appending project name)
         basedir = general.get("basedir", "")
 
-        # Check if in remote mode
-        is_remote = general.get("execution_mode") == "remote"
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
 
         if is_remote:
             # Remote mode: use remote OpenBench path for defaults

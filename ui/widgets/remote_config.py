@@ -1797,14 +1797,22 @@ class RemoteConfigWidget(QWidget):
 
     def disconnect(self):
         """Disconnect from remote server."""
+        # First disconnect compute node if connected
+        self._disconnect_node(silent=True)
+
+        # Disconnect main server
         if self._ssh_manager:
             try:
                 self._ssh_manager.disconnect()
             except Exception:
                 pass
             self._ssh_manager = None
+
+        # Update UI - reset all button states
         self.status_label.setText("Not connected")
         self.status_label.setStyleSheet("color: #999;")
+        self.btn_test.setEnabled(True)
+        self.btn_disconnect.setEnabled(False)
         self.connection_status_changed.emit(False)
 
     def clear_credentials(self):

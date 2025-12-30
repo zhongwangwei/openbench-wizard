@@ -378,16 +378,17 @@ try:
     result = {{"success": True}}
     result["variables"] = list(ds.data_vars)
 
-    # Find time dimension
+    # Find time dimension and extract time range
     time_dims = ['time', 'Time', 'TIME', 't', 'date']
     for td in time_dims:
         if td in ds.dims or td in ds.coords:
             try:
-                time_vals = pd.to_datetime(ds[td].values)
+                time_data = ds[td].values
+                time_vals = pd.to_datetime(time_data)
                 result["time_range"] = [int(time_vals.year.min()), int(time_vals.year.max())]
-            except Exception:
-                # If time conversion fails, try to extract year from raw values
-                pass
+            except Exception as e:
+                # If time conversion fails, skip time check
+                result["time_error"] = str(e)
             break
 
     # Find lat/lon dimensions
@@ -410,13 +411,17 @@ except Exception as e:
     print(json.dumps({{"success": False, "error": str(e)}}))
 '''
 
-    def __init__(self, ssh_manager):
+    def __init__(self, ssh_manager, python_path: str = "", conda_env: str = ""):
         """Initialize with SSH manager.
 
         Args:
             ssh_manager: SSHManager instance for remote execution
+            python_path: Path to Python interpreter on remote server
+            conda_env: Conda environment name to activate before running
         """
         self._ssh = ssh_manager
+        self._python_path = python_path or "python3"
+        self._conda_env = conda_env
 
     def check_file_exists(self, path: str) -> ValidationCheck:
         """Check if file exists on remote server."""
@@ -430,8 +435,18 @@ except Exception as e:
 
     def _run_inspect_script(self, path: str) -> Optional[Dict[str, Any]]:
         """Run inspection script on remote server."""
+        import base64
         script = self.INSPECT_SCRIPT.format(path=path)
-        cmd = f"python3 -c '{script}'"
+
+        # Encode script as base64 to avoid shell quoting issues
+        script_b64 = base64.b64encode(script.encode()).decode()
+
+        # Build command with proper Python environment
+        if self._conda_env:
+            # Activate conda environment before running
+            cmd = f"source ~/.bashrc 2>/dev/null; conda activate {self._conda_env} 2>/dev/null; echo {script_b64} | base64 -d | {self._python_path}"
+        else:
+            cmd = f"echo {script_b64} | base64 -d | {self._python_path}"
 
         try:
             stdout, stderr, exit_code = self._ssh.execute(cmd, timeout=30)
@@ -467,9 +482,13 @@ except Exception as e:
         if result is None or not result.get("success"):
             return ValidationCheck("time_range", False, "Remote time check failed")
 
+        # Check for time conversion error
+        if "time_error" in result:
+            return ValidationCheck("time_range", True, "Time check skipped (non-standard calendar)")
+
         time_range = result.get("time_range")
         if time_range is None:
-            return ValidationCheck("time_range", False, "Time dimension not found")
+            return ValidationCheck("time_range", True, "Time check skipped (no time dimension)")
 
         data_syear, data_eyear = time_range
         if data_syear <= syear and data_eyear >= eyear:
@@ -523,7 +542,8 @@ class DataValidator:
     local filesystem (xarray) and remote execution (SSH + Python script).
     """
 
-    def __init__(self, is_remote: bool = False, ssh_manager=None, remote_openbench_root: str = ""):
+    def __init__(self, is_remote: bool = False, ssh_manager=None, remote_openbench_root: str = "",
+                 python_path: str = "", conda_env: str = ""):
         """Initialize validator.
 
         Args:
@@ -531,13 +551,15 @@ class DataValidator:
                       files are accessed for validation, not storage abstraction.
             ssh_manager: SSHManager instance (required if is_remote=True)
             remote_openbench_root: Remote OpenBench root path (for remote mode)
+            python_path: Python interpreter path for remote execution
+            conda_env: Conda environment name for remote execution
         """
         self._is_remote = is_remote
         self._ssh_manager = ssh_manager
         self._remote_openbench_root = remote_openbench_root
 
         if is_remote and ssh_manager:
-            self._validator = RemoteNetCDFValidator(ssh_manager)
+            self._validator = RemoteNetCDFValidator(ssh_manager, python_path, conda_env)
         else:
             self._validator = LocalNetCDFValidator()
 

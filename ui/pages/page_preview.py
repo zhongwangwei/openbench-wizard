@@ -30,14 +30,10 @@ def get_remote_ssh_manager(controller):
     Returns:
         SSHManager instance if in remote mode and connected, None otherwise
     """
-    # Use controller's is_remote_mode() if storage is set, otherwise fall back to config check
-    if controller.storage is not None:
-        if not controller.is_remote_mode():
-            return None
-    else:
-        general = controller.config.get("general", {})
-        if general.get("execution_mode") != "remote":
-            return None
+    # Check storage type to determine if in remote mode
+    from core.storage import RemoteStorage
+    if not isinstance(controller.storage, RemoteStorage):
+        return None
     return controller.ssh_manager
 
 
@@ -112,12 +108,9 @@ class PagePreview(BasePage):
             QMessageBox.warning(self, "Validation Failed", error_msg)
             return False
 
-        # Check if in remote mode - use storage-based check if available, otherwise config
-        if self.controller.storage is not None:
-            is_remote = self.controller.is_remote_mode()
-        else:
-            general = self.controller.config.get("general", {})
-            is_remote = general.get("execution_mode") == "remote"
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
 
         if is_remote:
             # TODO: Refactor to use ProjectStorage interface for unified export
@@ -275,10 +268,16 @@ class PagePreview(BasePage):
         import shutil
         from core.path_utils import remote_join
 
+        # Local directories for writing files
         nml_dir = os.path.join(local_dir, "nml")
         sim_nml_dir = os.path.join(nml_dir, "sim")
         ref_nml_dir = os.path.join(nml_dir, "ref")
         sim_models_dir = os.path.join(sim_nml_dir, "models")
+
+        # Remote directories (paths that will be embedded in config files)
+        remote_nml_dir = remote_join(remote_dir, "nml")
+        remote_sim_nml_dir = remote_join(remote_nml_dir, "sim")
+        remote_ref_nml_dir = remote_join(remote_nml_dir, "ref")
 
         os.makedirs(sim_nml_dir, exist_ok=True)
         os.makedirs(ref_nml_dir, exist_ok=True)
@@ -314,13 +313,18 @@ class PagePreview(BasePage):
             # Merge configs for the same source
             merged_config = self._merge_source_configs(group_data["configs"], group_data["var_names"])
             dest_path = os.path.join(sim_nml_dir, f"{source_name}.yaml")
-            self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root)
+            remote_dest_path = remote_join(remote_sim_nml_dir, f"{source_name}.yaml")
+            self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root, remote_dest_path)
 
         # Copy model definition files for sim (read from remote server)
-        sim_def_nml = sim_data.get("def_nml", {})
-        for source_name, model_path in sim_def_nml.items():
-            if model_path:
-                actual_path = self._resolve_model_path(model_path, openbench_root, is_remote=True)
+        # Extract model_namelist paths from source configs
+        copied_models = set()
+        for source_config in sim_source_configs.values():
+            general = source_config.get("general", {})
+            model_path = general.get("model_namelist", "")
+            if model_path and model_path not in copied_models:
+                copied_models.add(model_path)
+                actual_path = self._resolve_model_path(model_path, openbench_root, is_remote=True, ssh_manager=ssh_manager)
                 if actual_path:
                     # Extract model name from path
                     model_basename = actual_path.rstrip('/').split('/')[-1]
@@ -352,7 +356,8 @@ class PagePreview(BasePage):
             # Merge configs for the same source
             merged_config = self._merge_source_configs(group_data["configs"], group_data["var_names"])
             dest_path = os.path.join(ref_nml_dir, f"{source_name}.yaml")
-            self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root)
+            remote_dest_path = remote_join(remote_ref_nml_dir, f"{source_name}.yaml")
+            self._write_source_config_remote(merged_config, dest_path, selected_items, openbench_root, remote_dest_path)
 
     def _merge_source_configs(self, configs: list, var_names: list) -> dict:
         """Merge multiple source configs into one.
@@ -409,21 +414,72 @@ class PagePreview(BasePage):
 
         return merged
 
-    def _resolve_model_path(self, model_path: str, openbench_root: str, is_remote: bool = False) -> str:
-        """Resolve model definition path, handling .nml to .yaml conversion."""
-        from core.path_utils import to_absolute_path
+    def _resolve_model_path(self, model_path: str, openbench_root: str, is_remote: bool = False, ssh_manager=None) -> str:
+        """Resolve model definition path, handling .nml to .yaml conversion.
+
+        For remote mode, works the same as local mode:
+        - Extract relative path from model_path (using /nml/ marker)
+        - Join with openbench_root (remote or local)
+        - Check file existence and try .yaml extension
+        """
+        from core.path_utils import to_absolute_path, to_posix_path
+        import shlex
 
         if not model_path:
             return ""
 
         if is_remote:
-            # In remote mode, just normalize the path (don't check local existence)
-            # The path is already a remote path
-            path = model_path.replace('\\', '/')
-            if not path.startswith('/') and openbench_root:
-                if path.startswith('./'):
-                    path = path[2:]
-                path = f"{openbench_root.rstrip('/')}/{path}"
+            # Normalize path separators
+            path = to_posix_path(model_path)
+
+            # Handle Windows absolute paths (e.g., C:/Users/...)
+            if len(path) >= 2 and path[1] == ':':
+                # This is a Windows local path - extract relative part if contains /nml/
+                if '/nml/' in path:
+                    relative_path = 'nml/' + path.split('/nml/', 1)[1]
+                else:
+                    # Unknown Windows path
+                    relative_path = path
+            # Extract relative path - look for /nml/ marker (handles local temp paths)
+            elif '/nml/' in path:
+                relative_path = 'nml/' + path.split('/nml/', 1)[1]
+            elif path.startswith('./'):
+                relative_path = path[2:]
+            elif path.startswith('/'):
+                # Already absolute - check if it's a valid remote path
+                if any(path.startswith(p) for p in ['/home/', '/share/', '/data/', '/work/', '/scratch/']):
+                    # Keep as absolute path
+                    relative_path = None
+                else:
+                    # Unknown absolute path, return as-is
+                    return path
+            else:
+                # Relative path
+                relative_path = path
+
+            # Build absolute path on remote server
+            if relative_path and openbench_root:
+                path = f"{openbench_root.rstrip('/')}/{relative_path}"
+
+            # Try different extensions on remote
+            if ssh_manager:
+                paths_to_try = [path]
+                if path.endswith('.nml'):
+                    paths_to_try.insert(0, path[:-4] + '.yaml')
+                elif not path.endswith('.yaml'):
+                    paths_to_try.append(path + '.yaml')
+
+                for try_path in paths_to_try:
+                    try:
+                        quoted_path = shlex.quote(try_path)
+                        stdout, stderr, exit_code = ssh_manager.execute(
+                            f"test -f {quoted_path} && echo 'exists'", timeout=10
+                        )
+                        if exit_code == 0 and 'exists' in stdout:
+                            return try_path
+                    except Exception:
+                        pass
+
             return path
 
         # Local mode: Convert to absolute path
@@ -484,7 +540,54 @@ class PagePreview(BasePage):
             with open(dest_path, 'w', encoding='utf-8') as f:
                 yaml.dump(filtered, f, default_flow_style=False, allow_unicode=True, sort_keys=False, indent=2)
 
-    def _write_source_config_remote(self, source_data: dict, dest_path: str, selected_items: list, openbench_root: str):
+    def _resolve_path_for_remote(self, path: str, openbench_root: str) -> str:
+        """Convert a path to absolute remote path.
+
+        Works the same as local mode's to_absolute_path() - but for remote paths.
+        Handles both Unix and Windows local paths.
+        """
+        from core.path_utils import to_posix_path
+
+        if not path:
+            return ""
+
+        # Convert to POSIX format (forward slashes)
+        path = to_posix_path(path)
+
+        # Handle Windows absolute paths (e.g., C:/Users/... or D:/...)
+        # After to_posix_path, Windows paths become like "C:/Users/..."
+        if len(path) >= 2 and path[1] == ':':
+            # This is a Windows local path - extract relative part if contains /nml/
+            if '/nml/' in path:
+                relative_path = 'nml/' + path.split('/nml/', 1)[1]
+                return f"{openbench_root.rstrip('/')}/{relative_path}"
+            # Unknown Windows path - cannot convert to remote
+            return path
+
+        # If path is already an absolute Unix path
+        if path.startswith('/'):
+            # Check if it's a valid remote server path
+            if any(path.startswith(p) for p in ['/home/', '/share/', '/data/', '/work/', '/scratch/', '/opt/', '/usr/']):
+                return path
+            # Handle local temp paths (like /var/folders/... or /tmp/...) - extract relative part
+            if '/nml/' in path:
+                relative_path = 'nml/' + path.split('/nml/', 1)[1]
+                return f"{openbench_root.rstrip('/')}/{relative_path}"
+            # Unknown absolute path - return as-is (might be a valid remote path)
+            return path
+
+        # Handle relative paths starting with ./
+        if path.startswith('./'):
+            path = path[2:]
+
+        # Join relative path with openbench_root
+        if openbench_root:
+            return f"{openbench_root.rstrip('/')}/{path}"
+
+        return path
+
+    def _write_source_config_remote(self, source_data: dict, dest_path: str, selected_items: list,
+                                      openbench_root: str, remote_dest_path: str = ""):
         """Write source config file for remote execution.
 
         Expects source_data to have structure:
@@ -495,6 +598,13 @@ class PagePreview(BasePage):
         }
 
         Output is consistent with local mode _write_source_config_organized.
+
+        Args:
+            source_data: Source configuration data
+            dest_path: Local path to write the file
+            selected_items: List of selected evaluation items
+            openbench_root: OpenBench root path (remote)
+            remote_dest_path: Remote path that will be used in the config (for model_namelist paths)
         """
         import yaml
         from core.path_utils import remote_join
@@ -504,21 +614,37 @@ class PagePreview(BasePage):
 
         filtered = {}
 
+        # Path fields that need to be converted to absolute remote paths
+        path_fields = ["root_dir", "basedir", "fulllist", "data_path", "file_path"]
+
+        # Internal fields that should NOT be written to output (UI-only or internal)
+        internal_fields = ["def_nml_path", "per_var_time_range", "_var_name", "source_configs"]
+
         # Process general section
         if "general" in source_data and isinstance(source_data["general"], dict):
             general = source_data["general"].copy()
+
+            # Remove internal fields from general
+            for field in internal_fields:
+                general.pop(field, None)
+
+            # Convert path fields to absolute remote paths
+            for field in path_fields:
+                if field in general and general[field]:
+                    general[field] = self._resolve_path_for_remote(general[field], openbench_root)
 
             # Update model_namelist path to point to models subdirectory (consistent with local mode)
             if "model_namelist" in general and general["model_namelist"]:
                 model_path = general["model_namelist"]
                 model_basename = model_path.rstrip('/').split('/')[-1]
                 model_basename = os.path.splitext(model_basename)[0]
-                dest_dir = dest_path.rsplit('/', 1)[0] if '/' in dest_path else os.path.dirname(dest_path)
+                # Use remote path for model_namelist, not local path
+                if remote_dest_path:
+                    dest_dir = remote_dest_path.rsplit('/', 1)[0] if '/' in remote_dest_path else remote_dest_path
+                else:
+                    dest_dir = dest_path.rsplit('/', 1)[0] if '/' in dest_path else os.path.dirname(dest_path)
                 models_dir = remote_join(dest_dir, "models")
                 general["model_namelist"] = remote_join(models_dir, model_basename + ".yaml")
-
-            # Remove UI-only field from output
-            general.pop("per_var_time_range", None)
 
             # Check if any variable has per_var_time_range enabled
             any_per_var = any(
@@ -540,8 +666,13 @@ class PagePreview(BasePage):
                 item_data = source_data[item]
                 if isinstance(item_data, dict):
                     var_config = item_data.copy()
-                    # Remove per_var_time_range from output (it's only for UI control)
-                    var_config.pop("per_var_time_range", None)
+                    # Remove internal fields from variable config
+                    for field in internal_fields:
+                        var_config.pop(field, None)
+                    # Convert path fields in variable config to absolute remote paths
+                    for field in path_fields:
+                        if field in var_config and var_config[field]:
+                            var_config[field] = self._resolve_path_for_remote(var_config[field], openbench_root)
                     if var_config:  # Only add if there's data
                         filtered[item] = var_config
                 elif item_data is not None:

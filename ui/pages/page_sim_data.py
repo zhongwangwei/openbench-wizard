@@ -31,8 +31,9 @@ def get_remote_ssh_manager(controller):
     Returns:
         SSHManager instance if in remote mode and connected, None otherwise
     """
-    general = controller.config.get("general", {})
-    if general.get("execution_mode") != "remote":
+    # Check storage type to determine if in remote mode
+    from core.storage import RemoteStorage
+    if not isinstance(controller.storage, RemoteStorage):
         return None
     return controller.ssh_manager
 
@@ -272,9 +273,9 @@ class PageSimData(BasePage):
         # saved_source_configs now uses compound key: "var_name::source_name"
         saved_source_configs = sim_data.get("source_configs", {})
 
-        # Check if in remote mode
-        config_general = self.controller.config.get("general", {})
-        is_remote = config_general.get("execution_mode") == "remote"
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
         ssh_manager = get_remote_ssh_manager(self.controller) if is_remote else None
 
         eval_items = self.controller.config.get("evaluation_items", {})
@@ -293,9 +294,15 @@ class PageSimData(BasePage):
 
                 # First check if we have saved source config (from previous edits)
                 if compound_key in saved_source_configs:
-                    self._source_configs[var_name][source_name] = saved_source_configs[compound_key].copy()
-                    self._update_source_list(var_name)
-                    continue
+                    saved_config = saved_source_configs[compound_key]
+                    # Check if cached data has valid root_dir - if not, force re-read from def_nml
+                    general = saved_config.get("general", {})
+                    root_dir = general.get("root_dir") or general.get("dir", "")
+                    if root_dir:
+                        self._source_configs[var_name][source_name] = saved_config.copy()
+                        self._update_source_list(var_name)
+                        continue
+                    # Cached data is incomplete, fall through to load from def_nml
 
                 # Otherwise load from def_nml file
                 def_nml_path = def_nml.get(source_name, "")
@@ -365,49 +372,58 @@ class PageSimData(BasePage):
         return None
 
     def _resolve_remote_def_nml_path(self, ssh_manager, def_nml_path: str) -> str:
-        """Resolve def_nml path on remote server."""
+        """Resolve def_nml path on remote server.
+
+        Works the same way as _resolve_def_nml_path for local mode:
+        to_absolute_path(def_nml_path, openbench_root)
+
+        Handles both Unix and Windows local paths.
+        """
+        from core.path_utils import to_posix_path
+
         if not def_nml_path:
             return ""
 
-        # If already absolute, return as-is
-        if def_nml_path.startswith('/'):
+        # Get remote OpenBench path from config
+        general = self.controller.config.get("general", {})
+        remote_config = general.get("remote", {})
+        remote_openbench_path = remote_config.get("openbench_path", "")
+
+        if not remote_openbench_path:
             return def_nml_path
 
-        # Get project root from controller
-        project_root = self.controller.project_root or ""
+        # Convert to POSIX format (forward slashes)
+        path = to_posix_path(def_nml_path)
 
-        # Handle relative paths
-        if def_nml_path.startswith('./'):
-            relative_path = def_nml_path[2:]
-        else:
-            relative_path = def_nml_path
+        # Handle Windows absolute paths (e.g., C:/Users/...)
+        if len(path) >= 2 and path[1] == ':':
+            # This is a Windows local path - extract relative part if contains /nml/
+            if '/nml/' in path:
+                relative_path = 'nml/' + path.split('/nml/', 1)[1]
+                return f"{remote_openbench_path.rstrip('/')}/{relative_path}"
+            # Unknown Windows path - cannot convert to remote
+            return path
 
-        # Try different base directories
-        paths_to_try = []
-        if project_root:
-            paths_to_try.append(f"{project_root}/{relative_path}")
-            # Also try output directory from config
-            basedir = self.controller.config.get("general", {}).get("basedir", "")
-            if basedir:
-                if basedir.startswith('/'):
-                    paths_to_try.append(f"{basedir.rstrip('/')}/{relative_path.lstrip('/')}")
-                else:
-                    paths_to_try.append(f"{project_root}/{basedir}/{relative_path}")
+        # Extract relative path from various formats
+        relative_path = path
 
-        # Check which path exists on remote
-        for path in paths_to_try:
-            try:
-                quoted_path = shlex.quote(path)
-                stdout, stderr, exit_code = ssh_manager.execute(
-                    f"test -f {quoted_path} && echo 'exists'", timeout=10
-                )
-                if exit_code == 0 and 'exists' in stdout:
-                    return path
-            except Exception as e:
-                logger.debug("Failed to check remote path %s: %s", path, e)
+        # If path contains /nml/, extract from that point (handles local temp paths)
+        if '/nml/' in path:
+            relative_path = 'nml/' + path.split('/nml/', 1)[1]
+        elif path.startswith('./'):
+            relative_path = path[2:]
+        elif path.startswith('/'):
+            # Check if it's already a valid remote path
+            if any(path.startswith(prefix) for prefix in ['/home/', '/share/', '/data/', '/work/', '/scratch/']):
+                return path
+            # Extract relative portion if contains /nml/
+            if '/nml/' in path:
+                relative_path = 'nml/' + path.split('/nml/', 1)[1]
+            else:
+                return path
 
-        # Return the first attempt if nothing found
-        return paths_to_try[0] if paths_to_try else def_nml_path
+        # Same as local: to_absolute_path(def_nml_path, openbench_root)
+        return f"{remote_openbench_path.rstrip('/')}/{relative_path}"
 
     def _resolve_def_nml_path(self, def_nml_path: str) -> str:
         """Resolve def_nml path to YAML file."""
@@ -633,11 +649,9 @@ class PageSimData(BasePage):
         # Get general config
         general_config = self.controller.config.get("general", {})
 
-        # Check if remote mode - use storage-based check if available, otherwise fallback to config
-        if self.controller.storage is not None:
-            is_remote = self.controller.is_remote_mode()
-        else:
-            is_remote = general_config.get("execution_mode") == "remote"
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
         ssh_manager = get_remote_ssh_manager(self.controller) if is_remote else None
 
         if is_remote and not ssh_manager:
@@ -646,17 +660,23 @@ class PageSimData(BasePage):
             )
             return
 
-        # Get remote OpenBench root for remote mode
+        # Get remote config for remote mode
         remote_openbench_root = ""
+        python_path = ""
+        conda_env = ""
         if is_remote:
             remote_config = general_config.get("remote", {})
             remote_openbench_root = remote_config.get("openbench_path", "")
+            python_path = remote_config.get("python_path", "")
+            conda_env = remote_config.get("conda_env", "")
 
         # Create validator
         validator = DataValidator(
             is_remote=is_remote,
             ssh_manager=ssh_manager,
-            remote_openbench_root=remote_openbench_root
+            remote_openbench_root=remote_openbench_root,
+            python_path=python_path,
+            conda_env=conda_env
         )
 
         # Show progress dialog

@@ -13,11 +13,10 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QFrame, QMessageBox,
     QFileDialog, QSplitter, QDialog
 )
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import Qt, QSize
 
 from ui.wizard_controller import WizardController
 from ui.widgets.remote_config import RemoteFileBrowser
-from ui.dialogs.project_selector import ProjectSelectorDialog
 from ui.widgets.sync_status import SyncStatusWidget
 from core.storage import ProjectStorage, LocalStorage, RemoteStorage
 from core.sync_engine import SyncStatus
@@ -57,8 +56,8 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._update_navigation()
 
-        # Show project selector on startup (after window is ready)
-        QTimer.singleShot(100, self._show_project_selector)
+        # Initialize with default local storage (project selection via Runtime Environment page)
+        self._init_default_storage()
 
     def _setup_ui(self):
         """Initialize the user interface."""
@@ -385,9 +384,8 @@ class MainWindow(QMainWindow):
 
     def _on_load_clicked(self):
         """Handle Load Config button click."""
-        # Check if in remote mode
-        general = self.controller.config.get("general", {})
-        if general.get("execution_mode") == "remote":
+        # Check if using remote storage (not config, since storage type is authoritative)
+        if isinstance(self.controller.storage, RemoteStorage):
             file_path = self._browse_remote_config_file()
         else:
             file_path, _ = QFileDialog.getOpenFileName(
@@ -417,18 +415,21 @@ class MainWindow(QMainWindow):
             )
             return ""
 
-        # Get start path
-        try:
-            home = ssh_manager._get_home_dir()
-            # Try to find OpenBench nml directory
-            stdout, stderr, exit_code = ssh_manager.execute(
-                f"ls -d {home}/OpenBench/output 2>/dev/null || echo {home}",
-                timeout=10
-            )
-            start_path = stdout.strip() if exit_code == 0 else home
-        except Exception as e:
-            logger.debug("Failed to get remote home directory: %s", e)
-            start_path = "/"
+        # Get start path from configured OpenBench path
+        general = self.controller.config.get("general", {})
+        remote_config = general.get("remote", {})
+        openbench_path = remote_config.get("openbench_path", "")
+
+        if openbench_path:
+            # Use configured OpenBench output directory
+            start_path = f"{openbench_path.rstrip('/')}/output"
+        else:
+            # Fallback to home directory
+            try:
+                start_path = ssh_manager._get_home_dir()
+            except Exception as e:
+                logger.debug("Failed to get remote home directory: %s", e)
+                start_path = "/"
 
         # Create dialog with remote file browser
         dialog = QDialog(self)
@@ -456,9 +457,8 @@ class MainWindow(QMainWindow):
     def _load_config_file(self, file_path: str):
         """Load configuration from a YAML file."""
         try:
-            # Check if in remote mode
-            general = self.controller.config.get("general", {})
-            is_remote = general.get("execution_mode") == "remote"
+            # Check if using remote storage
+            is_remote = isinstance(self.controller.storage, RemoteStorage)
 
             if is_remote:
                 loaded_config = self._load_remote_yaml_file(file_path)
@@ -555,9 +555,8 @@ class MainWindow(QMainWindow):
         general = loaded_config.get("general", {})
         project_root = self.controller.project_root
 
-        # Check if in remote mode
-        current_general = self.controller.config.get("general", {})
-        is_remote = current_general.get("execution_mode") == "remote"
+        # Check if using remote storage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
 
         # Copy general settings and convert paths to absolute
         for key, value in general.items():
@@ -867,35 +866,57 @@ class MainWindow(QMainWindow):
             # Set project_root for new configs
             self.controller.project_root = get_openbench_root()
 
-    def _show_project_selector(self):
-        """Show project selector dialog on startup."""
-        dialog = ProjectSelectorDialog(self)
+    def _init_default_storage(self):
+        """Initialize with default local storage.
 
-        if dialog.exec() == QDialog.Accepted:
-            storage = dialog.get_storage()
-            project_name = dialog.get_project_name()
+        Uses the OpenBench root directory as the project directory.
+        Remote mode can be configured via the Runtime Environment page.
+        """
+        project_root = get_openbench_root()
+        self.controller.project_root = project_root
+        self.controller.storage = LocalStorage(project_root)
 
-            if storage:
-                self.controller.storage = storage
-                self.controller.project_root = storage.project_dir
+        # Try to load existing project config
+        self._try_load_project_config()
 
-                # Setup SSH manager for remote mode
-                ssh_manager = dialog.get_ssh_manager()
-                if ssh_manager:
-                    self.controller.ssh_manager = ssh_manager
+    def setup_remote_storage(self, ssh_manager, remote_project_dir: str):
+        """Setup remote storage when user connects via Runtime Environment page.
 
-                # Update sync status widget if remote
-                if isinstance(storage, RemoteStorage):
-                    self._setup_sync_status(storage.sync_engine)
+        Called by page_runtime when remote mode is configured.
 
-                # Load project if config exists
-                self._try_load_project_config()
+        Args:
+            ssh_manager: Connected SSH manager
+            remote_project_dir: Remote project directory path
+        """
+        from core.sync_engine import SyncEngine
 
-                # Update window title with project name
-                self.setWindowTitle(f"OpenBench NML Wizard - {project_name}")
-        else:
-            # User cancelled - close application
-            self.close()
+        # Create sync engine and remote storage
+        sync_engine = SyncEngine(ssh_manager, remote_project_dir)
+        self.controller.storage = RemoteStorage(remote_project_dir, sync_engine)
+        self.controller.ssh_manager = ssh_manager
+
+        # Setup sync status widget
+        self._setup_sync_status(sync_engine)
+
+        # Start background sync
+        sync_engine.start_background_sync()
+
+    def setup_local_storage(self, project_dir: str):
+        """Setup local storage when user switches to local mode.
+
+        Called by page_runtime when local mode is configured.
+
+        Args:
+            project_dir: Local project directory path
+        """
+        self.controller.storage = LocalStorage(project_dir)
+        self.controller.project_root = project_dir
+
+        # Remove sync status widget if exists
+        if self._sync_status:
+            self._sync_status.setParent(None)
+            self._sync_status.deleteLater()
+            self._sync_status = None
 
     def _setup_sync_status(self, sync_engine):
         """Setup sync status widget for remote mode."""

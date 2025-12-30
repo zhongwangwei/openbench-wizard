@@ -125,10 +125,11 @@ class PageRunMonitor(BasePage):
         comparisons = config.get("comparisons", {})
         num_comparisons = len([k for k, v in comparisons.items() if v])
 
-        # Check execution mode and create appropriate runner
-        execution_mode = general.get("execution_mode", "local")
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
 
-        if execution_mode == "remote":
+        if is_remote:
             # Remote execution mode
             self._runner = self._create_remote_runner(config_path, general)
             if self._runner is None:
@@ -354,9 +355,9 @@ class PageRunMonitor(BasePage):
         """Open output directory."""
         output_dir = self.controller.get_output_dir()
 
-        # Check if in remote mode
-        general = self.controller.config.get("general", {})
-        is_remote = general.get("execution_mode") == "remote"
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.controller.storage, RemoteStorage)
 
         if is_remote:
             # In remote mode, open remote file browser

@@ -281,7 +281,10 @@ class WizardController(QObject):
         general = self._config.get("general", {})
         basedir = general.get("basedir", "")
         basename = general.get("basename", "config")
-        is_remote = general.get("execution_mode") == "remote"
+
+        # Check if in remote mode using storage type
+        from core.storage import RemoteStorage
+        is_remote = isinstance(self.storage, RemoteStorage)
 
         if basedir and (os.path.isabs(basedir) or basedir.startswith('/')):
             # Check if basedir already ends with basename to avoid duplication

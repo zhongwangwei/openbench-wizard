@@ -158,6 +158,13 @@ class PageRuntime(BasePage):
             self.remote_config_widget.hide()
             # Reset CPU available label to local
             self.cpu_available_label.setText(f"(Available: {os.cpu_count() or 'N/A'})")
+
+            # Disconnect remote connection when switching to local mode
+            if self.remote_config_widget.is_connected():
+                self.remote_config_widget.disconnect()
+
+            # Switch to local storage
+            self._switch_to_local_storage()
         else:
             self.parallel_group.hide()  # Parallel Processing is inside RemoteConfigWidget
             self.local_env_group.hide()
@@ -176,10 +183,58 @@ class PageRuntime(BasePage):
             # Update controller's ssh_manager when connected
             self.controller.ssh_manager = self.remote_config_widget.get_ssh_manager()
             logger.debug("SSH manager set on controller")
+
+            # Automatically switch to remote mode when connected
+            if not self.radio_remote.isChecked():
+                self.radio_remote.blockSignals(True)
+                self.radio_remote.setChecked(True)
+                self.radio_local.setChecked(False)
+                self.radio_remote.blockSignals(False)
+                # Update UI visibility
+                self.parallel_group.hide()
+                self.local_env_group.hide()
+                self.remote_config_widget.show()
+
+            # Switch to remote storage
+            self._switch_to_remote_storage()
         else:
             # Clear ssh_manager when disconnected
             self.controller.ssh_manager = None
             logger.debug("SSH manager cleared from controller")
+
+    def _switch_to_local_storage(self):
+        """Switch to local storage mode."""
+        from core.path_utils import get_openbench_root
+        main_window = self._get_main_window()
+        if main_window and hasattr(main_window, 'setup_local_storage'):
+            project_dir = get_openbench_root()
+            main_window.setup_local_storage(project_dir)
+            logger.info("Switched to local storage mode")
+
+    def _switch_to_remote_storage(self):
+        """Switch to remote storage mode."""
+        main_window = self._get_main_window()
+        if main_window and hasattr(main_window, 'setup_remote_storage'):
+            ssh_manager = self.remote_config_widget.get_ssh_manager()
+            remote_config = self.remote_config_widget.get_config()
+            # Use openbench_path as the remote project directory
+            remote_project_dir = remote_config.get("openbench_path", "")
+            if ssh_manager and remote_project_dir:
+                main_window.setup_remote_storage(ssh_manager, remote_project_dir)
+                logger.info(f"Switched to remote storage mode: {remote_project_dir}")
+            elif ssh_manager:
+                # If no project dir configured, use default ~/OpenBench
+                default_dir = "~/OpenBench"
+                main_window.setup_remote_storage(ssh_manager, default_dir)
+                logger.info(f"Switched to remote storage mode with default: {default_dir}")
+
+    def _get_main_window(self):
+        """Get the main window instance."""
+        # Use Qt's window() method to get the top-level window
+        window = self.window()
+        if window and window.__class__.__name__ == 'MainWindow':
+            return window
+        return None
 
     def _on_python_changed(self, text):
         """Handle Python path change."""

@@ -79,13 +79,14 @@ class ValidationProgressDialog(QDialog):
         self.setMinimumHeight(150)
 
         self._report: Optional[DataValidationReport] = None
+        self._closing = False
         self._setup_ui()
 
         # Start worker
-        self._worker = ValidationWorker(validator, sources, general_config)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._on_finished)
-        self._worker.error.connect(self._on_error)
+        self._worker = ValidationWorker(validator, sources, general_config, self)
+        self._worker.progress.connect(self._on_progress, Qt.QueuedConnection)
+        self._worker.finished.connect(self._on_finished, Qt.QueuedConnection)
+        self._worker.error.connect(self._on_error, Qt.QueuedConnection)
         self._worker.start()
 
     def _setup_ui(self):
@@ -118,6 +119,9 @@ class ValidationProgressDialog(QDialog):
 
     def _on_progress(self, current: int, total: int, var_name: str, source_name: str):
         """Handle progress update."""
+        if self._closing:
+            return
+
         if total > 0:
             percent = int(current / total * 100)
             self.progress_bar.setValue(percent)
@@ -128,19 +132,46 @@ class ValidationProgressDialog(QDialog):
 
     def _on_finished(self, report: DataValidationReport):
         """Handle validation finished."""
+        if self._closing:
+            return
+
         self._report = report
+        self._cleanup_worker()
         self.accept()
 
     def _on_error(self, error: str):
         """Handle validation error."""
+        if self._closing:
+            return
+
+        self._cleanup_worker()
         QMessageBox.warning(self, "Validation Error", f"Error during validation:\n{error}")
         self.reject()
 
     def _on_cancel(self):
         """Handle cancel button."""
-        self._worker.cancel()
-        self._worker.wait(1000)
+        self._closing = True
+        self._cleanup_worker()
         self.reject()
+
+    def _cleanup_worker(self):
+        """Clean up worker thread."""
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker.wait(2000)
+            # Disconnect signals to prevent callbacks to deleted objects
+            try:
+                self._worker.progress.disconnect()
+                self._worker.finished.disconnect()
+                self._worker.error.disconnect()
+            except RuntimeError:
+                pass  # Already disconnected
+
+    def closeEvent(self, event):
+        """Handle dialog close event."""
+        self._closing = True
+        self._cleanup_worker()
+        super().closeEvent(event)
 
     def get_report(self) -> Optional[DataValidationReport]:
         """Get validation report after dialog closes."""
