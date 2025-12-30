@@ -555,8 +555,8 @@ class DataSourceEditor(QDialog):
         # Reset all form fields before loading new values
         self._reset_form_fields()
 
-        # Extract source name from filename if creating new source
-        if hasattr(self, 'name_input') and not self.name_input.text():
+        # Update source name from filename
+        if hasattr(self, 'name_input'):
             source_name = os.path.splitext(os.path.basename(file_path))[0]
             self.name_input.setText(source_name)
 
