@@ -909,6 +909,16 @@ class MainWindow(QMainWindow):
         Args:
             project_dir: Local project directory path
         """
+        # Stop and cleanup old sync engine if exists (from previous remote mode)
+        old_storage = self.controller.storage
+        if old_storage and hasattr(old_storage, '_sync_engine'):
+            sync_engine = old_storage._sync_engine
+            if sync_engine:
+                # Clear the callback first to prevent crashes
+                sync_engine._on_status_changed = None
+                # Stop background sync thread
+                sync_engine.stop_background_sync()
+
         self.controller.storage = LocalStorage(project_dir)
         self.controller.project_root = project_dir
 
@@ -936,11 +946,20 @@ class MainWindow(QMainWindow):
         # Connect to sync engine status changes using thread-safe signal
         # The callback is called from background sync thread, so we use a signal
         # with QueuedConnection to safely update UI in the main thread
+        # Use a weak reference pattern to avoid crashes when widget is deleted
+        sync_status_widget = self._sync_status  # Capture reference
+
         def on_status_changed(path, status):
-            overall = sync_engine.get_overall_status()
-            pending = sync_engine.get_pending_count()
-            # Emit signal instead of direct call - thread-safe
-            self._sync_status.status_update_requested.emit(overall, pending)
+            # Check if widget still exists before emitting signal
+            if sync_status_widget and self._sync_status is sync_status_widget:
+                try:
+                    overall = sync_engine.get_overall_status()
+                    pending = sync_engine.get_pending_count()
+                    # Emit signal instead of direct call - thread-safe
+                    sync_status_widget.status_update_requested.emit(overall, pending)
+                except RuntimeError:
+                    # Widget was deleted
+                    pass
 
         sync_engine._on_status_changed = on_status_changed
         self._sync_status.retry_clicked.connect(sync_engine.retry_errors)
