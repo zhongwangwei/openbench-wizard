@@ -924,6 +924,7 @@ class MainWindow(QMainWindow):
 
         # Remove sync status widget if exists
         if self._sync_status:
+            self._sync_status.cleanup()
             self._sync_status.setParent(None)
             self._sync_status.deleteLater()
             self._sync_status = None
@@ -932,6 +933,7 @@ class MainWindow(QMainWindow):
         """Setup sync status widget for remote mode."""
         # Remove old sync status if exists
         if self._sync_status:
+            self._sync_status.cleanup()
             self._sync_status.setParent(None)
             self._sync_status.deleteLater()
 
@@ -946,20 +948,33 @@ class MainWindow(QMainWindow):
         # Connect to sync engine status changes using thread-safe signal
         # The callback is called from background sync thread, so we use a signal
         # with QueuedConnection to safely update UI in the main thread
-        # Use a weak reference pattern to avoid crashes when widget is deleted
-        sync_status_widget = self._sync_status  # Capture reference
+        # Use a weak reference to avoid crashes when widget is deleted
+        import weakref
+        widget_ref = weakref.ref(self._sync_status)
+        main_window_ref = weakref.ref(self)
 
         def on_status_changed(path, status):
-            # Check if widget still exists before emitting signal
-            if sync_status_widget and self._sync_status is sync_status_widget:
+            # Get the widget via weak reference - returns None if deleted
+            widget = widget_ref()
+            main_window = main_window_ref()
+            if widget is None or main_window is None:
+                # Widget or main window was garbage collected, clear callback
                 try:
-                    overall = sync_engine.get_overall_status()
-                    pending = sync_engine.get_pending_count()
-                    # Emit signal instead of direct call - thread-safe
-                    sync_status_widget.status_update_requested.emit(overall, pending)
-                except RuntimeError:
-                    # Widget was deleted
+                    sync_engine._on_status_changed = None
+                except Exception:
                     pass
+                return
+            # Additional check: ensure this is still the current sync status widget
+            if main_window._sync_status is not widget:
+                return
+            try:
+                overall = sync_engine.get_overall_status()
+                pending = sync_engine.get_pending_count()
+                # Emit signal instead of direct call - thread-safe
+                widget.status_update_requested.emit(overall, pending)
+            except RuntimeError:
+                # Widget was deleted, clear callback
+                sync_engine._on_status_changed = None
 
         sync_engine._on_status_changed = on_status_changed
         self._sync_status.retry_clicked.connect(sync_engine.retry_errors)

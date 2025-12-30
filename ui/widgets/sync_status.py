@@ -154,9 +154,31 @@ class SyncStatusWidget(QWidget):
         """Get the current pending count."""
         return self._pending_count
 
+    def cleanup(self):
+        """Clean up resources before destruction.
+
+        Call this method before deleteLater() to ensure proper cleanup.
+        """
+        # Stop animation timer
+        if hasattr(self, '_animation_timer') and self._animation_timer:
+            self._animation_timer.stop()
+            self._animation_timer.timeout.disconnect()
+
+        # Disconnect our own signals to prevent callbacks after deletion
+        try:
+            self.status_update_requested.disconnect()
+        except (RuntimeError, TypeError):
+            # Already disconnected or never connected
+            pass
+
+        try:
+            self.retry_clicked.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+
     def closeEvent(self, event):
         """Handle widget close - stop animation timer."""
-        self._animation_timer.stop()
+        self.cleanup()
         super().closeEvent(event)
 
     def __del__(self):

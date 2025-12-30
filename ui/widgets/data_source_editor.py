@@ -1179,3 +1179,30 @@ class DataSourceEditor(QDialog):
             file_path = dialog.get_saved_path()
             if file_path:
                 self.model_nml.set_path(file_path)
+
+    def _cleanup(self):
+        """Clean up resources before dialog destruction.
+
+        Clears custom browse handlers and signal connections to prevent
+        crashes when reopening the dialog.
+        """
+        # Clear custom browse handlers (they hold lambdas that reference self)
+        if hasattr(self, 'root_dir'):
+            self.root_dir.set_custom_browse_handler(None)
+        if hasattr(self, 'fulllist'):
+            self.fulllist.set_custom_browse_handler(None)
+        if self.source_type == "sim" and hasattr(self, 'model_nml'):
+            self.model_nml.set_custom_browse_handler(None)
+            # Disconnect model path change signal
+            try:
+                self.model_nml.path_changed.disconnect(self._on_model_changed)
+            except (RuntimeError, TypeError):
+                pass
+
+        # Clear SSH manager reference
+        self._ssh_manager = None
+
+    def done(self, result):
+        """Override done to ensure cleanup on dialog close."""
+        self._cleanup()
+        super().done(result)

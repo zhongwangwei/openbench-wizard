@@ -403,3 +403,13 @@ class ModelDefinitionEditor(QDialog):
     def get_saved_path(self) -> str:
         """Get the path where the file was saved."""
         return self._saved_path
+
+    def _cleanup(self):
+        """Clean up resources before dialog destruction."""
+        # Clear SSH manager reference to break potential reference cycles
+        self._ssh_manager = None
+
+    def done(self, result):
+        """Override done to ensure cleanup on dialog close."""
+        self._cleanup()
+        super().done(result)
