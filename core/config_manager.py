@@ -453,16 +453,29 @@ class ConfigManager:
 
         # Copy model definition files for sim (into models/ subdirectory)
         sim_models_dir = os.path.join(sim_nml_dir, "models")
+
+        # Debug logging
+        import tempfile
+        debug_log = os.path.join(tempfile.gettempdir(), "openbench_wizard_debug.log")
+        with open(debug_log, 'a') as f:
+            f.write(f"\n=== Local mode: Copy model files ===\n")
+            f.write(f"sim_model_files: {sim_model_files}\n")
+            f.write(f"sim_models_dir: {sim_models_dir}\n")
+
         for model_path in sim_model_files:
             if model_path:
                 # Try to find the actual file (handle .nml -> .yaml conversion)
                 actual_path = self._resolve_model_path(model_path)
+                with open(debug_log, 'a') as f:
+                    f.write(f"model_path={model_path}, actual_path={actual_path}, exists={os.path.exists(actual_path) if actual_path else False}\n")
                 if actual_path and os.path.exists(actual_path):
                     # Always use .yaml extension for output
                     model_name = os.path.splitext(os.path.basename(actual_path))[0] + ".yaml"
                     dest_path = os.path.join(sim_models_dir, model_name)
                     self._copy_model_definition(actual_path, dest_path, selected_items)
                     copied_files[f"model_{model_name}"] = dest_path
+                    with open(debug_log, 'a') as f:
+                        f.write(f"  copied to {dest_path}\n")
 
         # Process reference data namelists
         ref_data = config.get("ref_data", {})

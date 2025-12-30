@@ -80,10 +80,11 @@ class ValidationProgressDialog(QDialog):
 
         self._report: Optional[DataValidationReport] = None
         self._closing = False
+        self._worker: Optional[ValidationWorker] = None
         self._setup_ui()
 
-        # Start worker
-        self._worker = ValidationWorker(validator, sources, general_config, self)
+        # Start worker - don't set parent to avoid Qt destruction issues
+        self._worker = ValidationWorker(validator, sources, general_config, None)
         self._worker.progress.connect(self._on_progress, Qt.QueuedConnection)
         self._worker.finished.connect(self._on_finished, Qt.QueuedConnection)
         self._worker.error.connect(self._on_error, Qt.QueuedConnection)
@@ -157,15 +158,26 @@ class ValidationProgressDialog(QDialog):
     def _cleanup_worker(self):
         """Clean up worker thread."""
         if self._worker is not None:
-            self._worker.cancel()
-            self._worker.wait(2000)
-            # Disconnect signals to prevent callbacks to deleted objects
+            # Disconnect signals first to prevent any more callbacks
             try:
                 self._worker.progress.disconnect()
                 self._worker.finished.disconnect()
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass  # Already disconnected
+
+            # Request cancellation and wait for thread to finish
+            self._worker.cancel()
+            if self._worker.isRunning():
+                self._worker.wait(3000)
+                if self._worker.isRunning():
+                    # Force terminate if still running
+                    self._worker.terminate()
+                    self._worker.wait(1000)
+
+            # Schedule deletion to ensure all events are processed
+            self._worker.deleteLater()
+            self._worker = None
 
     def closeEvent(self, event):
         """Handle dialog close event."""
