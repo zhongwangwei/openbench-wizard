@@ -8,10 +8,13 @@ import os
 import sys
 
 from PySide6.QtWidgets import (
-    QFormLayout, QLineEdit, QSpinBox, QDoubleSpinBox,
-    QComboBox, QCheckBox, QGroupBox, QHBoxLayout,
+    QFormLayout, QLineEdit,
+    QCheckBox, QGroupBox, QHBoxLayout,
     QGridLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout,
     QDialog
+)
+from ui.widgets.no_scroll_widgets import (
+    NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox
 )
 
 from ui.pages.base_page import BasePage
@@ -64,14 +67,14 @@ class PageGeneral(BasePage):
         # Year range
         self.year_range_label = QLabel("Year Range:")
         st_layout.addWidget(self.year_range_label, 0, 0)
-        self.syear_spin = QSpinBox()
+        self.syear_spin = NoScrollSpinBox()
         self.syear_spin.setRange(1900, 2100)
         self.syear_spin.setValue(2000)
         self.syear_spin.valueChanged.connect(self._on_year_range_changed)
         st_layout.addWidget(self.syear_spin, 0, 1)
         self.year_range_to_label = QLabel("to")
         st_layout.addWidget(self.year_range_to_label, 0, 2)
-        self.eyear_spin = QSpinBox()
+        self.eyear_spin = NoScrollSpinBox()
         self.eyear_spin.setRange(1900, 2100)
         self.eyear_spin.setValue(2020)
         self.eyear_spin.valueChanged.connect(self._on_year_range_changed)
@@ -79,7 +82,7 @@ class PageGeneral(BasePage):
 
         # Minimum year threshold
         st_layout.addWidget(QLabel("Min Year Threshold:"), 1, 0)
-        self.min_year_spin = QDoubleSpinBox()
+        self.min_year_spin = NoScrollDoubleSpinBox()
         self.min_year_spin.setRange(0.0, 100.0)
         self.min_year_spin.setValue(1.0)
         self.min_year_spin.setSingleStep(0.5)
@@ -88,36 +91,36 @@ class PageGeneral(BasePage):
 
         # Latitude range
         st_layout.addWidget(QLabel("Latitude Range:"), 2, 0)
-        self.min_lat_spin = QDoubleSpinBox()
+        self.min_lat_spin = NoScrollDoubleSpinBox()
         self.min_lat_spin.setRange(-90.0, 90.0)
         self.min_lat_spin.setValue(-90.0)
         st_layout.addWidget(self.min_lat_spin, 2, 1)
         st_layout.addWidget(QLabel("to"), 2, 2)
-        self.max_lat_spin = QDoubleSpinBox()
+        self.max_lat_spin = NoScrollDoubleSpinBox()
         self.max_lat_spin.setRange(-90.0, 90.0)
         self.max_lat_spin.setValue(90.0)
         st_layout.addWidget(self.max_lat_spin, 2, 3)
 
         # Longitude range
         st_layout.addWidget(QLabel("Longitude Range:"), 3, 0)
-        self.min_lon_spin = QDoubleSpinBox()
+        self.min_lon_spin = NoScrollDoubleSpinBox()
         self.min_lon_spin.setRange(-180.0, 180.0)
         self.min_lon_spin.setValue(-180.0)
         st_layout.addWidget(self.min_lon_spin, 3, 1)
         st_layout.addWidget(QLabel("to"), 3, 2)
-        self.max_lon_spin = QDoubleSpinBox()
+        self.max_lon_spin = NoScrollDoubleSpinBox()
         self.max_lon_spin.setRange(-180.0, 180.0)
         self.max_lon_spin.setValue(180.0)
         st_layout.addWidget(self.max_lon_spin, 3, 3)
 
         # Resolution
         st_layout.addWidget(QLabel("Time Resolution:"), 4, 0)
-        self.tim_res_combo = QComboBox()
+        self.tim_res_combo = NoScrollComboBox()
         self.tim_res_combo.addItems(["month", "day", "hour", "year"])
         st_layout.addWidget(self.tim_res_combo, 4, 1)
 
         st_layout.addWidget(QLabel("Grid Resolution:"), 4, 2)
-        self.grid_res_spin = QDoubleSpinBox()
+        self.grid_res_spin = NoScrollDoubleSpinBox()
         self.grid_res_spin.setRange(0.01, 10.0)
         self.grid_res_spin.setValue(2.0)
         self.grid_res_spin.setSingleStep(0.1)
@@ -126,7 +129,7 @@ class PageGeneral(BasePage):
 
         # Timezone
         st_layout.addWidget(QLabel("Timezone:"), 5, 0)
-        self.timezone_spin = QDoubleSpinBox()
+        self.timezone_spin = NoScrollDoubleSpinBox()
         self.timezone_spin.setRange(-12.0, 14.0)
         self.timezone_spin.setValue(0.0)
         self.timezone_spin.setSingleStep(0.5)
@@ -134,7 +137,7 @@ class PageGeneral(BasePage):
 
         # Weight
         st_layout.addWidget(QLabel("Weight:"), 5, 2)
-        self.weight_combo = QComboBox()
+        self.weight_combo = NoScrollComboBox()
         self.weight_combo.addItems(["None", "area", "mass"])
         self.weight_combo.setToolTip("Weight method for spatial averaging (None, area-weighted, or mass-weighted)")
         st_layout.addWidget(self.weight_combo, 5, 3)
@@ -201,7 +204,7 @@ class PageGeneral(BasePage):
 
         # Note: Runtime Environment is now on a separate page (PageRuntime)
         # num_cores_spin kept for config compatibility
-        self.num_cores_spin = QSpinBox()
+        self.num_cores_spin = NoScrollSpinBox()
         self.num_cores_spin.setRange(1, 128)
         self.num_cores_spin.setValue(4)
         self.num_cores_spin.hide()  # Hidden, but kept for config compatibility
@@ -259,12 +262,14 @@ class PageGeneral(BasePage):
             # Use remote file browser
             self._browse_remote_directory()
         else:
-            # Use local file dialog
+            # Use local file dialog with OpenBench root as default
             from PySide6.QtWidgets import QFileDialog
+            from ui.widgets.path_selector import get_default_browse_path
+            start_dir = self.basedir_input.path() or get_default_browse_path()
             path = QFileDialog.getExistingDirectory(
                 self,
                 "Select Output Directory",
-                self.basedir_input.path() or os.path.expanduser("~"),
+                start_dir,
                 QFileDialog.ShowDirsOnly
             )
             if path:

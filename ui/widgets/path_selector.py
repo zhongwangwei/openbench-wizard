@@ -18,6 +18,32 @@ if TYPE_CHECKING:
 from ui.widgets.path_completer import PathCompleter
 
 
+def get_default_browse_path() -> str:
+    """Get default browse path from config or runtime settings.
+
+    Returns the configured OpenBench path if available,
+    otherwise falls back to home directory.
+    """
+    import yaml
+
+    # Try from runtime settings file
+    try:
+        settings_path = os.path.join(
+            os.path.expanduser("~"), ".openbench_wizard", "runtime_settings.yaml"
+        )
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                settings = yaml.safe_load(f) or {}
+                saved_path = settings.get("local_openbench_path", "")
+                if saved_path and os.path.isdir(saved_path):
+                    return saved_path
+    except Exception:
+        pass
+
+    # Fall back to home directory
+    return os.path.expanduser("~")
+
+
 class PathSelector(QWidget):
     """Widget for selecting file or directory paths."""
 
@@ -45,7 +71,7 @@ class PathSelector(QWidget):
         super().__init__(parent)
         self.mode = mode
         self.filter = filter or "All Files (*)"
-        self._last_dir = os.path.expanduser("~")
+        self._last_dir = get_default_browse_path()
         self._custom_browse_handler = None
         self._skip_validation = False  # Skip path existence validation (for remote mode)
 

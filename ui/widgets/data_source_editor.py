@@ -8,10 +8,13 @@ from typing import Dict, Any, Optional
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
+    QLineEdit,
     QPushButton, QGroupBox, QRadioButton, QButtonGroup,
     QDialogButtonBox, QLabel, QMessageBox, QFileDialog,
     QCheckBox, QScrollArea, QWidget
+)
+from ui.widgets.no_scroll_widgets import (
+    NoScrollDoubleSpinBox, NoScrollComboBox
 )
 from PySide6.QtCore import Qt
 
@@ -182,7 +185,7 @@ class DataSourceEditor(QDialog):
         basic_layout.addRow("Data Type:", type_layout)
 
         # Data groupby
-        self.groupby_combo = QComboBox()
+        self.groupby_combo = NoScrollComboBox()
         self.groupby_combo.addItems(["Year", "Month", "Day", "Single"])
         basic_layout.addRow("Data Groupby:", self.groupby_combo)
 
@@ -234,7 +237,7 @@ class DataSourceEditor(QDialog):
         time_layout = QFormLayout(time_group)
 
         # Time resolution
-        self.tim_res_combo = QComboBox()
+        self.tim_res_combo = NoScrollComboBox()
         self.tim_res_combo.addItems(["Month", "Day", "Hour", "Year"])
         time_layout.addRow("Time Resolution:", self.tim_res_combo)
 
@@ -267,7 +270,7 @@ class DataSourceEditor(QDialog):
         self._update_year_range_tooltip()
 
         # Timezone
-        self.timezone_spin = QDoubleSpinBox()
+        self.timezone_spin = NoScrollDoubleSpinBox()
         self.timezone_spin.setRange(-12.0, 14.0)
         self.timezone_spin.setValue(0.0)
         self.timezone_spin.setSingleStep(0.5)
@@ -549,6 +552,9 @@ class DataSourceEditor(QDialog):
         if content is None:
             return
 
+        # Reset all form fields before loading new values
+        self._reset_form_fields()
+
         # Extract source name from filename if creating new source
         if hasattr(self, 'name_input') and not self.name_input.text():
             source_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -564,6 +570,74 @@ class DataSourceEditor(QDialog):
             f"Configuration loaded from:\n{os.path.basename(file_path)}"
         )
 
+    def _reset_form_fields(self):
+        """Reset all form fields to default/empty values before loading new data."""
+        # Reset path fields
+        self.root_dir.set_path("")
+        if hasattr(self, 'fulllist'):
+            self.fulllist.set_path("")
+
+        # Reset data type to default (grid)
+        self.radio_grid.setChecked(True)
+        self._on_data_type_changed()
+
+        # Reset combo boxes to first item
+        self.groupby_combo.setCurrentIndex(0)
+        self.tim_res_combo.setCurrentIndex(0)
+
+        # Reset text inputs
+        self.syear_input.clear()
+        self.eyear_input.clear()
+        self.grid_res_input.clear()
+
+        # Reset timezone
+        self.timezone_spin.setValue(0.0)
+
+        # Reset variable-specific fields
+        if hasattr(self, 'sub_dir_input'):
+            self.sub_dir_input.clear()
+        if hasattr(self, 'varname_input'):
+            self.varname_input.clear()
+        if hasattr(self, 'varunit_input'):
+            self.varunit_input.clear()
+        if hasattr(self, 'prefix_input'):
+            self.prefix_input.clear()
+        if hasattr(self, 'suffix_input'):
+            self.suffix_input.clear()
+
+        # Reset sim-specific fields
+        if self.source_type == "sim" and hasattr(self, 'model_nml'):
+            self.model_nml.set_path("")
+
+    def _get_local_openbench_path(self) -> str:
+        """Get local OpenBench path from config or runtime settings."""
+        import os
+        import yaml as yaml_module
+
+        # Try from controller if available
+        if hasattr(self, '_controller') and self._controller:
+            general = self._controller.config.get("general", {})
+            local_path = general.get("local_openbench_path", "")
+            if local_path and os.path.isdir(local_path):
+                return local_path
+
+        # Try from runtime settings file
+        try:
+            settings_path = os.path.join(
+                os.path.expanduser("~"), ".openbench_wizard", "runtime_settings.yaml"
+            )
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = yaml_module.safe_load(f) or {}
+                    saved_path = settings.get("local_openbench_path", "")
+                    if saved_path and os.path.isdir(saved_path):
+                        return saved_path
+        except Exception:
+            pass
+
+        # Fall back to detected OpenBench root
+        return get_openbench_root()
+
     def _prompt_for_yaml_file(self) -> str:
         """Open file dialog to select a YAML file. Returns file path or empty string."""
         import os
@@ -572,7 +646,7 @@ class DataSourceEditor(QDialog):
             # Use remote file browser
             return self._prompt_for_remote_yaml_file()
 
-        openbench_root = get_openbench_root()
+        openbench_root = self._get_local_openbench_path()
         default_dir = os.path.join(openbench_root, "nml", "nml-yaml")
 
         if self.source_type == "ref":

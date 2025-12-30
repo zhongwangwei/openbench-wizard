@@ -15,9 +15,10 @@ from typing import Optional, Dict, Any, List
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QGroupBox, QLineEdit, QPushButton, QRadioButton,
-    QButtonGroup, QCheckBox, QComboBox, QLabel,
+    QButtonGroup, QCheckBox, QLabel,
     QMessageBox, QFileDialog, QInputDialog
 )
+from ui.widgets.no_scroll_widgets import NoScrollSpinBox, NoScrollComboBox
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import QListWidgetItem
 
@@ -596,10 +597,9 @@ class RemoteConfigWidget(QWidget):
         parallel_layout.setSpacing(8)
 
         # Number of CPU cores
-        from PySide6.QtWidgets import QSpinBox
         cores_layout = QHBoxLayout()
         cores_layout.setSpacing(8)
-        self.num_cores_spin = QSpinBox()
+        self.num_cores_spin = NoScrollSpinBox()
         self.num_cores_spin.setRange(1, 128)
         self.num_cores_spin.setValue(4)
         self.num_cores_spin.setMinimumWidth(80)
@@ -621,7 +621,7 @@ class RemoteConfigWidget(QWidget):
         # Python path with Detect and Browse buttons
         python_layout = QHBoxLayout()
         python_layout.setSpacing(8)
-        self.python_combo = QComboBox()
+        self.python_combo = NoScrollComboBox()
         self.python_combo.setEditable(True)
         self.python_combo.setMinimumWidth(250)
         self.python_combo.currentTextChanged.connect(self._on_config_changed)
@@ -645,7 +645,7 @@ class RemoteConfigWidget(QWidget):
         # Conda environment with Refresh button
         conda_layout = QHBoxLayout()
         conda_layout.setSpacing(8)
-        self.conda_combo = QComboBox()
+        self.conda_combo = NoScrollComboBox()
         self.conda_combo.addItem("(Not using conda environment)")
         self.conda_combo.currentIndexChanged.connect(self._on_conda_env_changed)
         self.conda_combo.currentTextChanged.connect(self._on_config_changed)

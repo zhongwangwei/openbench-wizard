@@ -10,13 +10,14 @@ import shutil
 import yaml
 
 from PySide6.QtWidgets import (
-    QHBoxLayout, QFormLayout, QSpinBox, QLabel,
-    QGroupBox, QRadioButton, QButtonGroup, QComboBox,
-    QPushButton, QFileDialog, QMessageBox
+    QHBoxLayout, QFormLayout, QLabel,
+    QGroupBox, QRadioButton, QButtonGroup,
+    QPushButton, QFileDialog, QMessageBox, QLineEdit
 )
 
 from ui.pages.base_page import BasePage
 from ui.widgets.remote_config import RemoteConfigWidget
+from ui.widgets.no_scroll_widgets import NoScrollSpinBox, NoScrollComboBox
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class PageRuntime(BasePage):
 
         # Number of CPU cores
         cores_layout = QHBoxLayout()
-        self.num_cores_spin = QSpinBox()
+        self.num_cores_spin = NoScrollSpinBox()
         self.num_cores_spin.setRange(1, 128)
         self.num_cores_spin.setValue(min(4, os.cpu_count() or 4))
         self.num_cores_spin.setMinimumWidth(80)
@@ -96,10 +97,26 @@ class PageRuntime(BasePage):
         local_layout = QFormLayout(self.local_env_group)
         local_layout.setSpacing(12)
 
+        # Conda environment with Refresh button (first, so user selects env before Python)
+        conda_layout = QHBoxLayout()
+        conda_layout.setSpacing(8)
+        self.conda_combo = NoScrollComboBox()
+        self.conda_combo.addItem("(Not using conda environment)")
+        self.conda_combo.currentTextChanged.connect(self._on_conda_changed)
+        conda_layout.addWidget(self.conda_combo, 1)
+
+        self.btn_refresh_conda = QPushButton("Refresh")
+        self.btn_refresh_conda.setFixedWidth(60)
+        self.btn_refresh_conda.setToolTip("Refresh conda environments")
+        self.btn_refresh_conda.clicked.connect(self._refresh_conda)
+        conda_layout.addWidget(self.btn_refresh_conda)
+
+        local_layout.addRow("Conda Env:", conda_layout)
+
         # Python path with Detect and Browse buttons
         python_layout = QHBoxLayout()
         python_layout.setSpacing(8)
-        self.python_combo = QComboBox()
+        self.python_combo = NoScrollComboBox()
         self.python_combo.setEditable(True)
         self.python_combo.setMinimumWidth(300)
         self.python_combo.currentTextChanged.connect(self._on_python_changed)
@@ -119,21 +136,27 @@ class PageRuntime(BasePage):
 
         local_layout.addRow("Python:", python_layout)
 
-        # Conda environment with Refresh button
-        conda_layout = QHBoxLayout()
-        conda_layout.setSpacing(8)
-        self.conda_combo = QComboBox()
-        self.conda_combo.addItem("(Not using conda environment)")
-        self.conda_combo.currentTextChanged.connect(self._on_conda_changed)
-        conda_layout.addWidget(self.conda_combo, 1)
+        # OpenBench path with Browse and Install buttons
+        openbench_layout = QHBoxLayout()
+        openbench_layout.setSpacing(8)
+        self.local_openbench_input = QLineEdit()
+        self.local_openbench_input.setPlaceholderText("Path to OpenBench installation directory")
+        self.local_openbench_input.textChanged.connect(self._on_config_changed)
+        openbench_layout.addWidget(self.local_openbench_input, 1)
 
-        self.btn_refresh_conda = QPushButton("Refresh")
-        self.btn_refresh_conda.setFixedWidth(60)
-        self.btn_refresh_conda.setToolTip("Refresh conda environments")
-        self.btn_refresh_conda.clicked.connect(self._refresh_conda)
-        conda_layout.addWidget(self.btn_refresh_conda)
+        self.btn_browse_openbench = QPushButton("Browse")
+        self.btn_browse_openbench.setFixedWidth(60)
+        self.btn_browse_openbench.setToolTip("Browse for OpenBench installation directory")
+        self.btn_browse_openbench.clicked.connect(self._browse_openbench)
+        openbench_layout.addWidget(self.btn_browse_openbench)
 
-        local_layout.addRow("Conda Env:", conda_layout)
+        self.btn_install_openbench = QPushButton("Install")
+        self.btn_install_openbench.setFixedWidth(60)
+        self.btn_install_openbench.setToolTip("Install OpenBench from GitHub")
+        self.btn_install_openbench.clicked.connect(self._install_openbench)
+        openbench_layout.addWidget(self.btn_install_openbench)
+
+        local_layout.addRow("OpenBench:", openbench_layout)
 
         self.content_layout.addWidget(self.local_env_group)
 
@@ -207,9 +230,12 @@ class PageRuntime(BasePage):
         from core.path_utils import get_openbench_root
         main_window = self._get_main_window()
         if main_window and hasattr(main_window, 'setup_local_storage'):
-            project_dir = get_openbench_root()
+            # Use local OpenBench path if configured, otherwise fall back to auto-detect
+            project_dir = self.local_openbench_input.text().strip()
+            if not project_dir or not os.path.isdir(project_dir):
+                project_dir = get_openbench_root()
             main_window.setup_local_storage(project_dir)
-            logger.info("Switched to local storage mode")
+            logger.info(f"Switched to local storage mode: {project_dir}")
 
     def _switch_to_remote_storage(self):
         """Switch to remote storage mode."""
@@ -328,6 +354,195 @@ class PageRuntime(BasePage):
 
         if path:
             self.python_combo.setCurrentText(path)
+
+    def _browse_openbench(self):
+        """Browse for OpenBench installation directory."""
+        current_path = self.local_openbench_input.text().strip()
+        start_dir = current_path if current_path and os.path.isdir(current_path) else os.path.expanduser("~")
+
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Select OpenBench Installation Directory",
+            start_dir
+        )
+
+        if path:
+            # Verify it's a valid OpenBench installation
+            script_path = os.path.join(path, 'openbench', 'openbench.py')
+            if os.path.exists(script_path):
+                self.local_openbench_input.setText(path)
+            else:
+                reply = QMessageBox.question(
+                    self,
+                    "Not a Valid OpenBench Directory",
+                    f"The selected directory does not contain 'openbench/openbench.py'.\n\n"
+                    f"Selected: {path}\n\n"
+                    "Use this path anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    self.local_openbench_input.setText(path)
+
+    def _install_openbench(self):
+        """Install OpenBench from GitHub."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QTextEdit,
+            QPushButton, QLabel, QRadioButton, QButtonGroup, QApplication
+        )
+        import subprocess
+
+        # Get installation path from input field
+        install_path = self.local_openbench_input.text().strip()
+        if not install_path:
+            # Set default path if empty
+            install_path = os.path.join(os.path.expanduser("~"), "OpenBench")
+            self.local_openbench_input.setText(install_path)
+
+        # Check if git is available
+        git_path = shutil.which("git")
+        if not git_path:
+            QMessageBox.critical(
+                self, "Git Not Found",
+                "Git is not installed or not in PATH.\n\n"
+                "Please install Git first:\n"
+                "• macOS: brew install git\n"
+                "• Ubuntu: sudo apt install git\n"
+                "• Windows: https://git-scm.com/download/win"
+            )
+            return
+
+        # Check if path already exists
+        is_update = False
+        if os.path.exists(install_path):
+            git_dir = os.path.join(install_path, ".git")
+            if os.path.exists(git_dir):
+                reply = QMessageBox.question(
+                    self,
+                    "OpenBench Already Exists",
+                    f"OpenBench already exists at:\n{install_path}\n\n"
+                    "Would you like to update it (git pull)?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                if reply != QMessageBox.Yes:
+                    return
+                is_update = True
+            else:
+                QMessageBox.warning(
+                    self, "Directory Exists",
+                    f"Directory already exists but is not a Git repository:\n{install_path}\n\n"
+                    "Please choose a different path or remove the existing directory."
+                )
+                return
+
+        # Protocol selection dialog (consistent with remote mode)
+        repo_url = "https://github.com/zhongwangwei/OpenBench.git"
+        if not is_update:
+            source_dialog = QDialog(self)
+            source_dialog.setWindowTitle("Select Protocol")
+            source_layout = QVBoxLayout(source_dialog)
+
+            source_layout.addWidget(QLabel("Source: GitHub (github.com/zhongwangwei/OpenBench)"))
+            source_layout.addWidget(QLabel("\nChoose protocol:"))
+
+            protocol_group = QButtonGroup(source_dialog)
+            radio_https = QRadioButton("HTTPS (https://github.com - Recommended)")
+            radio_ssh = QRadioButton("SSH (git@github.com - If SSH key configured)")
+            radio_https.setChecked(True)
+            protocol_group.addButton(radio_https)
+            protocol_group.addButton(radio_ssh)
+            source_layout.addWidget(radio_https)
+            source_layout.addWidget(radio_ssh)
+
+            btn_layout = QHBoxLayout()
+            btn_layout.addStretch()
+            btn_ok = QPushButton("OK")
+            btn_ok.clicked.connect(source_dialog.accept)
+            btn_cancel = QPushButton("Cancel")
+            btn_cancel.clicked.connect(source_dialog.reject)
+            btn_layout.addWidget(btn_ok)
+            btn_layout.addWidget(btn_cancel)
+            source_layout.addLayout(btn_layout)
+
+            if source_dialog.exec() != QDialog.Accepted:
+                return
+
+            if radio_ssh.isChecked():
+                repo_url = "git@github.com:zhongwangwei/OpenBench.git"
+
+        # Progress dialog
+        progress_dialog = QDialog(self)
+        progress_dialog.setWindowTitle("Installing OpenBench" if not is_update else "Updating OpenBench")
+        progress_dialog.resize(600, 400)
+        progress_layout = QVBoxLayout(progress_dialog)
+
+        status_label = QLabel("Starting..." if not is_update else "Updating...")
+        progress_layout.addWidget(status_label)
+
+        output_text = QTextEdit()
+        output_text.setReadOnly(True)
+        output_text.setStyleSheet("font-family: monospace;")
+        progress_layout.addWidget(output_text)
+
+        close_btn = QPushButton("Close")
+        close_btn.setEnabled(False)
+        close_btn.clicked.connect(progress_dialog.accept)
+        progress_layout.addWidget(close_btn)
+
+        progress_dialog.show()
+        QApplication.processEvents()
+
+        # Run installation
+        try:
+            self.btn_install_openbench.setEnabled(False)
+
+            if is_update:
+                cmd = ["git", "-C", install_path, "pull", "--ff-only"]
+                status_label.setText("Running git pull...")
+            else:
+                # Create parent directory if needed
+                parent_dir = os.path.dirname(install_path)
+                if parent_dir and not os.path.exists(parent_dir):
+                    os.makedirs(parent_dir, exist_ok=True)
+                cmd = ["git", "clone", "--progress", repo_url, install_path]
+                status_label.setText(f"Cloning from {repo_url}...")
+
+            output_text.append(f"$ {' '.join(cmd)}\n")
+            QApplication.processEvents()
+
+            # Run git command
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            for line in process.stdout:
+                output_text.append(line.rstrip())
+                QApplication.processEvents()
+
+            process.wait()
+
+            if process.returncode == 0:
+                status_label.setText("✓ Installation successful!" if not is_update else "✓ Update successful!")
+                status_label.setStyleSheet("color: green; font-weight: bold;")
+                output_text.append("\n\nOpenBench installed successfully!")
+            else:
+                status_label.setText("✗ Installation failed!" if not is_update else "✗ Update failed!")
+                status_label.setStyleSheet("color: red; font-weight: bold;")
+
+        except Exception as e:
+            output_text.append(f"\nError: {e}")
+            status_label.setText("✗ Error occurred!")
+            status_label.setStyleSheet("color: red; font-weight: bold;")
+        finally:
+            self.btn_install_openbench.setEnabled(True)
+            close_btn.setEnabled(True)
+
+        progress_dialog.exec()
 
     def _refresh_conda(self):
         """Refresh the list of available conda environments."""
@@ -457,6 +672,11 @@ class PageRuntime(BasePage):
                 self.conda_combo.setCurrentIndex(idx)
             self.conda_combo.blockSignals(False)
 
+        # Load local OpenBench path
+        local_openbench_path = general.get("local_openbench_path", "")
+        if local_openbench_path:
+            self.local_openbench_input.setText(local_openbench_path)
+
         # Load remote config
         remote_config = general.get("remote", {})
         if remote_config:
@@ -475,9 +695,10 @@ class PageRuntime(BasePage):
         # Save num_cores
         general["num_cores"] = self.num_cores_spin.value()
 
-        # Save Python path and conda env for local mode
+        # Save Python path, conda env, and OpenBench path for local mode
         general["python_path"] = self.python_combo.currentText().split(' ')[0]
         general["conda_env"] = self.conda_combo.currentText() if self.conda_combo.currentIndex() > 0 else ""
+        general["local_openbench_path"] = self.local_openbench_input.text().strip()
 
         # Save remote config if in remote mode
         if self.radio_remote.isChecked():
@@ -576,6 +797,7 @@ class PageRuntime(BasePage):
             "num_cores": self.num_cores_spin.value(),
             "python_path": self.python_combo.currentText().split(' ')[0],
             "conda_env": self.conda_combo.currentText() if self.conda_combo.currentIndex() > 0 else "",
+            "local_openbench_path": self.local_openbench_input.text().strip(),
         }
 
         # Include remote config if in remote mode
@@ -618,6 +840,11 @@ class PageRuntime(BasePage):
             if idx >= 0:
                 self.conda_combo.setCurrentIndex(idx)
             self.conda_combo.blockSignals(False)
+
+        # Apply local OpenBench path
+        local_openbench_path = settings.get("local_openbench_path", "")
+        if local_openbench_path:
+            self.local_openbench_input.setText(local_openbench_path)
 
         # Apply remote config
         remote_config = settings.get("remote", {})

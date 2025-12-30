@@ -388,14 +388,43 @@ class MainWindow(QMainWindow):
         if isinstance(self.controller.storage, RemoteStorage):
             file_path = self._browse_remote_config_file()
         else:
+            # Use OpenBench root as default directory
+            start_dir = self._get_local_openbench_path()
             file_path, _ = QFileDialog.getOpenFileName(
                 self,
                 "Load Configuration",
-                "",
+                start_dir,
                 "YAML Files (*.yaml *.yml);;All Files (*)"
             )
         if file_path:
             self._load_config_file(file_path)
+
+    def _get_local_openbench_path(self) -> str:
+        """Get local OpenBench path from config or runtime settings."""
+        # Try from controller config first
+        general = self.controller.config.get("general", {})
+        local_path = general.get("local_openbench_path", "")
+        if local_path and os.path.isdir(local_path):
+            return local_path
+
+        # Try from runtime settings file
+        try:
+            settings_path = os.path.join(
+                os.path.expanduser("~"), ".openbench_wizard", "runtime_settings.yaml"
+            )
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                    saved_path = settings.get("local_openbench_path", "")
+                    if saved_path and os.path.isdir(saved_path):
+                        return saved_path
+        except Exception:
+            pass
+
+        # Fall back to project_root or detected OpenBench root
+        if self.controller.project_root:
+            return self.controller.project_root
+        return get_openbench_root()
 
     def _get_remote_ssh_manager(self):
         """Get SSH manager from the runtime page."""
@@ -872,7 +901,26 @@ class MainWindow(QMainWindow):
         Uses the OpenBench root directory as the project directory.
         Remote mode can be configured via the Runtime Environment page.
         """
-        project_root = get_openbench_root()
+        # Try to use saved local_openbench_path from runtime settings
+        project_root = None
+        try:
+            settings_path = os.path.join(
+                os.path.expanduser("~"), ".openbench_wizard", "runtime_settings.yaml"
+            )
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                    saved_path = settings.get("local_openbench_path", "")
+                    if saved_path and os.path.isdir(saved_path):
+                        project_root = saved_path
+                        logger.info(f"Using saved OpenBench path: {project_root}")
+        except Exception as e:
+            logger.debug(f"Could not load saved OpenBench path: {e}")
+
+        # Fall back to auto-detection
+        if not project_root:
+            project_root = get_openbench_root()
+
         self.controller.project_root = project_root
         self.controller.storage = LocalStorage(project_root)
 
