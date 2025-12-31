@@ -372,12 +372,38 @@ class WizardController(QObject):
             self._config, openbench_root, output_dir
         )
 
-        # Write via storage
+        # Calculate the relative path from storage root to output_dir
+        # This ensures files are written to the case output directory, not OpenBench/nml
+        storage_root = self._storage.project_dir
+        if self.is_remote_mode():
+            # Remote mode: use forward slashes
+            storage_root = storage_root.rstrip('/').replace('\\', '/')
+            output_dir_clean = output_dir.rstrip('/').replace('\\', '/')
+            if output_dir_clean.startswith(storage_root):
+                rel_path = output_dir_clean[len(storage_root):].lstrip('/')
+            else:
+                rel_path = output_dir_clean.lstrip('/')
+            nml_path = f"{rel_path}/nml" if rel_path else "nml"
+        else:
+            # Local mode: use os.path
+            try:
+                rel_path = os.path.relpath(output_dir, storage_root)
+            except ValueError:
+                # Different drives on Windows
+                rel_path = output_dir
+            nml_path = os.path.join(rel_path, "nml")
+
+        # Write via storage to the case output directory
         try:
-            self._storage.mkdir("nml")
-            self._storage.write_file(f"nml/main-{basename}.yaml", main_content)
-            self._storage.write_file(f"nml/ref-{basename}.yaml", ref_content)
-            self._storage.write_file(f"nml/sim-{basename}.yaml", sim_content)
+            self._storage.mkdir(nml_path)
+            if self.is_remote_mode():
+                self._storage.write_file(f"{nml_path}/main-{basename}.yaml", main_content)
+                self._storage.write_file(f"{nml_path}/ref-{basename}.yaml", ref_content)
+                self._storage.write_file(f"{nml_path}/sim-{basename}.yaml", sim_content)
+            else:
+                self._storage.write_file(os.path.join(nml_path, f"main-{basename}.yaml"), main_content)
+                self._storage.write_file(os.path.join(nml_path, f"ref-{basename}.yaml"), ref_content)
+                self._storage.write_file(os.path.join(nml_path, f"sim-{basename}.yaml"), sim_content)
         except Exception as e:
             print(f"Warning: Failed to sync namelists: {e}")
 
