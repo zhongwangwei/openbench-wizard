@@ -618,6 +618,29 @@ class RemoteConfigWidget(QWidget):
         env_layout = QFormLayout(env_group)
         env_layout.setSpacing(8)
 
+        # Conda environment with Refresh button
+        conda_layout = QHBoxLayout()
+        conda_layout.setSpacing(8)
+        self.conda_combo = NoScrollComboBox()
+        self.conda_combo.addItem("(Not using conda environment)")
+        self.conda_combo.currentIndexChanged.connect(self._on_conda_env_changed)
+        self.conda_combo.currentTextChanged.connect(self._on_config_changed)
+        conda_layout.addWidget(self.conda_combo, 1)
+
+        self.btn_refresh_conda = QPushButton("Refresh")
+        self.btn_refresh_conda.setFixedWidth(60)
+        self.btn_refresh_conda.setToolTip("Refresh conda environments from remote server")
+        self.btn_refresh_conda.clicked.connect(self._refresh_conda)
+        conda_layout.addWidget(self.btn_refresh_conda)
+
+        self.btn_new_conda = QPushButton("New")
+        self.btn_new_conda.setFixedWidth(50)
+        self.btn_new_conda.setToolTip("Create new OpenBench conda environment")
+        self.btn_new_conda.clicked.connect(self._create_conda_env)
+        conda_layout.addWidget(self.btn_new_conda)
+
+        env_layout.addRow("Conda:", conda_layout)
+
         # Python path with Detect and Browse buttons
         python_layout = QHBoxLayout()
         python_layout.setSpacing(8)
@@ -641,29 +664,6 @@ class RemoteConfigWidget(QWidget):
         python_layout.addWidget(self.btn_browse_python)
 
         env_layout.addRow("Python:", python_layout)
-
-        # Conda environment with Refresh button
-        conda_layout = QHBoxLayout()
-        conda_layout.setSpacing(8)
-        self.conda_combo = NoScrollComboBox()
-        self.conda_combo.addItem("(Not using conda environment)")
-        self.conda_combo.currentIndexChanged.connect(self._on_conda_env_changed)
-        self.conda_combo.currentTextChanged.connect(self._on_config_changed)
-        conda_layout.addWidget(self.conda_combo, 1)
-
-        self.btn_refresh_conda = QPushButton("Refresh")
-        self.btn_refresh_conda.setFixedWidth(60)
-        self.btn_refresh_conda.setToolTip("Refresh conda environments from remote server")
-        self.btn_refresh_conda.clicked.connect(self._refresh_conda)
-        conda_layout.addWidget(self.btn_refresh_conda)
-
-        self.btn_new_conda = QPushButton("New")
-        self.btn_new_conda.setFixedWidth(50)
-        self.btn_new_conda.setToolTip("Create new OpenBench conda environment")
-        self.btn_new_conda.clicked.connect(self._create_conda_env)
-        conda_layout.addWidget(self.btn_new_conda)
-
-        env_layout.addRow("Conda:", conda_layout)
 
         # OpenBench path with Browse and Install buttons
         ob_layout = QHBoxLayout()
