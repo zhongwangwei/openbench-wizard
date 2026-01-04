@@ -101,8 +101,8 @@ class PageEvaluation(BasePage):
 
         if error:
             manager = ValidationManager(self)
-            manager.show_error_and_focus(error)
-            return False
+            if not manager.show_error_and_focus(error):
+                return False
 
         self.save_to_config()
         return True

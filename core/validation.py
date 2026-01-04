@@ -228,35 +228,54 @@ class ValidationManager:
         """
         self._parent = parent_widget
 
-    def show_error_and_focus(self, error: ValidationError) -> None:
+    def show_error_and_focus(self, error: ValidationError, allow_skip: bool = True) -> bool:
         """
-        Show error message and focus on the error widget.
+        Show error message and optionally allow user to skip validation.
 
         Args:
             error: ValidationError to display
-        """
-        QMessageBox.warning(
-            self._parent,
-            "Validation Error",
-            error.message
-        )
+            allow_skip: If True, show option to continue anyway
 
-        if error.widget is not None:
+        Returns:
+            True if user chose to continue anyway, False to stay on current page
+        """
+        if allow_skip:
+            # Show warning with option to continue
+            reply = QMessageBox.warning(
+                self._parent,
+                "Validation Warning",
+                f"{error.message}\n\nDo you want to continue anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            user_wants_to_continue = (reply == QMessageBox.Yes)
+        else:
+            # Just show warning, no option to skip
+            QMessageBox.warning(
+                self._parent,
+                "Validation Error",
+                error.message
+            )
+            user_wants_to_continue = False
+
+        if error.widget is not None and not user_wants_to_continue:
             error.widget.setFocus()
 
-    def validate_and_show_errors(self, errors: List[ValidationError]) -> bool:
+        return user_wants_to_continue
+
+    def validate_and_show_errors(self, errors: List[ValidationError], allow_skip: bool = True) -> bool:
         """
-        Process errors one by one, showing each and focusing.
+        Process errors, showing the first one and optionally allowing skip.
 
         Args:
             errors: List of validation errors
+            allow_skip: If True, allow user to continue despite errors
 
         Returns:
-            True if no errors, False if there were errors
+            True if no errors or user chose to continue, False otherwise
         """
         if not errors:
             return True
 
-        # Show first error only (blocking approach)
-        self.show_error_and_focus(errors[0])
-        return False
+        # Show first error with option to skip
+        return self.show_error_and_focus(errors[0], allow_skip=allow_skip)

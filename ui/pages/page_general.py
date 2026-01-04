@@ -722,10 +722,10 @@ class PageGeneral(BasePage):
         if error:
             errors.append(error)
 
-        # Show first error if any
+        # Show first error if any, allow user to skip
         if errors:
-            manager.show_error_and_focus(errors[0])
-            return False
+            if not manager.show_error_and_focus(errors[0]):
+                return False
 
         self.save_to_config()
         return True

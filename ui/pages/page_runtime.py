@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from ui.pages.base_page import BasePage
 from ui.widgets.remote_config import RemoteConfigWidget
 from ui.widgets.no_scroll_widgets import NoScrollSpinBox, NoScrollComboBox
+from core.path_utils import is_cross_platform_path
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,11 @@ class PageRuntime(BasePage):
         self.btn_load_settings.setToolTip("Load runtime settings from a file")
         self.btn_load_settings.clicked.connect(self._load_runtime_settings)
         mode_buttons.addWidget(self.btn_load_settings)
+
+        self.btn_reset_settings = QPushButton("Reset")
+        self.btn_reset_settings.setToolTip("Clear cached settings and reset to defaults")
+        self.btn_reset_settings.clicked.connect(self._reset_cached_settings)
+        mode_buttons.addWidget(self.btn_reset_settings)
 
         mode_layout.addRow("Mode:", mode_buttons)
 
@@ -170,8 +176,8 @@ class PageRuntime(BasePage):
         # Auto-detect Python on startup
         self._detect_python()
 
-        # Try to auto-load last saved settings
-        self._auto_load_settings()
+        # Clear any cached settings from previous sessions on startup
+        self._clear_cached_settings_file()
 
     def _on_execution_mode_changed(self, checked: bool):
         """Handle execution mode change."""
@@ -186,12 +192,19 @@ class PageRuntime(BasePage):
             if self.remote_config_widget.is_connected():
                 self.remote_config_widget.disconnect()
 
+            # Clear remote config when switching to local
+            self.remote_config_widget.reset_to_defaults()
+
             # Switch to local storage
             self._switch_to_local_storage()
         else:
             self.parallel_group.hide()  # Parallel Processing is inside RemoteConfigWidget
             self.local_env_group.hide()
             self.remote_config_widget.show()
+
+            # Clear local config when switching to remote
+            self.local_openbench_input.clear()
+
         self._on_config_changed()
 
     def _on_config_changed(self):
@@ -861,9 +874,44 @@ class PageRuntime(BasePage):
             try:
                 with open(default_path, 'r', encoding='utf-8') as f:
                     settings = yaml.safe_load(f) or {}
+
+                # Clean up cross-platform paths that won't work on current system
+                self._clean_cross_platform_paths(settings)
+
                 self._apply_runtime_settings(settings)
             except Exception:
                 pass  # Silently ignore errors on auto-load
+
+    def _clean_cross_platform_paths(self, settings: dict):
+        """Remove paths that are from a different platform."""
+        # Check local_openbench_path
+        local_path = settings.get("local_openbench_path", "")
+        if local_path and is_cross_platform_path(local_path):
+            logger.info(f"Clearing cross-platform path: {local_path}")
+            settings["local_openbench_path"] = ""
+
+        # Check remote config paths
+        remote = settings.get("remote", {})
+        if remote:
+            # openbench_path in remote config should be Unix-style (for remote server)
+            # so we don't need to clean it - it's expected to be a Linux path
+
+            # But python_path might be mixed
+            python_path = remote.get("python_path", "")
+            if python_path and is_cross_platform_path(python_path):
+                # For remote, python paths should be Unix-style
+                # Only clear if it looks like a local Windows path being used incorrectly
+                pass  # Remote paths are expected to be Unix-style
+
+    def _clear_cached_settings_file(self):
+        """Clear the cached settings file on startup."""
+        try:
+            default_path = get_default_runtime_settings_path()
+            if os.path.exists(default_path):
+                os.remove(default_path)
+                logger.info(f"Cleared cached settings on startup: {default_path}")
+        except Exception as e:
+            logger.debug(f"Could not clear cached settings: {e}")
 
     def _auto_save_settings(self):
         """Auto-save settings to default path for next startup."""
@@ -874,3 +922,53 @@ class PageRuntime(BasePage):
                 yaml.dump(settings, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
         except Exception:
             pass  # Silently ignore errors on auto-save
+
+    def _reset_cached_settings(self):
+        """Reset cached settings to defaults and clear the cache file."""
+        reply = QMessageBox.question(
+            self,
+            "Reset Settings",
+            "This will clear all cached runtime settings and reset to defaults.\n\n"
+            "This is useful when switching between different systems (Windows/Linux/Mac) "
+            "or when you want to start fresh.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            # Delete the cached settings file
+            default_path = get_default_runtime_settings_path()
+            if os.path.exists(default_path):
+                os.remove(default_path)
+                logger.info(f"Removed cached settings: {default_path}")
+
+            # Reset UI to defaults
+            self.radio_local.setChecked(True)
+            self.num_cores_spin.setValue(min(4, os.cpu_count() or 4))
+            self.python_combo.setCurrentIndex(0)
+            self.conda_combo.setCurrentIndex(0)
+            self.local_openbench_input.clear()
+            self.remote_config_widget.reset_to_defaults()
+
+            # Also reset the controller config
+            if self.controller:
+                self.controller.reset()
+
+            QMessageBox.information(
+                self,
+                "Settings Reset",
+                "Cached settings have been cleared.\n\n"
+                f"Cache location: {os.path.dirname(default_path)}"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to reset settings: {e}")
+            QMessageBox.warning(
+                self,
+                "Reset Failed",
+                f"Failed to reset settings: {e}"
+            )

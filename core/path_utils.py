@@ -8,6 +8,42 @@ import sys
 from typing import Optional, Tuple
 
 
+def is_cross_platform_path(path: str) -> bool:
+    """
+    Check if a path appears to be from a different platform.
+
+    On Windows: returns True if path looks like a Unix path (starts with /)
+    On Unix/Mac: returns True if path looks like a Windows path (has drive letter)
+
+    Args:
+        path: Path to check
+
+    Returns:
+        True if path appears to be from another platform
+    """
+    if not path:
+        return False
+
+    is_windows = sys.platform == 'win32'
+
+    # On Windows, check for Unix-style paths
+    if is_windows:
+        # Unix absolute path (starts with / but not UNC path //)
+        if path.startswith('/') and not path.startswith('//'):
+            return True
+
+    # On Unix/Mac, check for Windows-style paths
+    else:
+        # Windows drive letter (e.g., C:\ or C:/)
+        if len(path) >= 2 and path[1] == ':':
+            return True
+        # Windows backslash paths
+        if '\\' in path and not path.startswith('/'):
+            return True
+
+    return False
+
+
 def to_posix_path(path: str) -> str:
     """
     Convert a path to POSIX format (forward slashes).

@@ -1820,3 +1820,27 @@ class RemoteConfigWidget(QWidget):
         self._credential_manager.clear_all()
         self.password_input.clear()
         self.cb_save_password.setChecked(False)
+
+    def reset_to_defaults(self):
+        """Reset all remote config fields to defaults."""
+        # Host and authentication
+        self.host_input.clear()
+        self.password_input.clear()
+        self.key_input.clear()
+        self.radio_password.setChecked(True)
+        self.cb_save_password.setChecked(False)
+
+        # Compute node
+        self.node_group.setChecked(False)
+        self.node_input.clear()
+        self.node_password_input.clear()
+        self.node_key_input.clear()
+        self.radio_node_password.setChecked(True)
+
+        # Environment
+        self.num_cores_spin.setValue(4)
+        self.conda_combo.clear()
+        self.conda_combo.addItem("(Not using conda environment)")
+        self.conda_combo.setCurrentIndex(0)
+        self.python_combo.clear()
+        self.openbench_input.clear()

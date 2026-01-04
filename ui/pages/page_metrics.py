@@ -78,7 +78,7 @@ class PageMetrics(BasePage):
 
         if error:
             manager = ValidationManager(self)
-            manager.show_error_and_focus(error)
-            return False
+            if not manager.show_error_and_focus(error):
+                return False
 
         return True

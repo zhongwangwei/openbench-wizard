@@ -518,10 +518,10 @@ class PageRefData(BasePage):
                     page_id=self.PAGE_ID,
                     context={"var_name": var_name}
                 )
-                manager.show_error_and_focus(error)
-                # Auto-open add source dialog
-                self._add_source(var_name)
-                return False
+                if not manager.show_error_and_focus(error):
+                    # Auto-open add source dialog
+                    self._add_source(var_name)
+                    return False
 
             # Validate each source has required fields
             for source_name, source_data in sources.items():
@@ -564,9 +564,9 @@ class PageRefData(BasePage):
                             page_id=self.PAGE_ID,
                             context={"var_name": var_name, "source_name": source_name}
                         )
-                        manager.show_error_and_focus(error)
-                        self._select_and_edit_source(var_name, source_name)
-                        return False
+                        if not manager.show_error_and_focus(error):
+                            self._select_and_edit_source(var_name, source_name)
+                            return False
 
                 # Check root_dir
                 root_dir = general.get("root_dir", "") or general.get("dir", "")
@@ -577,9 +577,9 @@ class PageRefData(BasePage):
                         page_id=self.PAGE_ID,
                         context={"var_name": var_name, "source_name": source_name}
                     )
-                    manager.show_error_and_focus(error)
-                    self._select_and_edit_source(var_name, source_name)
-                    return False
+                    if not manager.show_error_and_focus(error):
+                        self._select_and_edit_source(var_name, source_name)
+                        return False
 
         self.save_to_config()
         return True

@@ -901,31 +901,13 @@ class MainWindow(QMainWindow):
         Uses the OpenBench root directory as the project directory.
         Remote mode can be configured via the Runtime Environment page.
         """
-        # Try to use saved local_openbench_path from runtime settings
-        project_root = None
-        try:
-            settings_path = os.path.join(
-                os.path.expanduser("~"), ".openbench_wizard", "runtime_settings.yaml"
-            )
-            if os.path.exists(settings_path):
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    settings = yaml.safe_load(f) or {}
-                    saved_path = settings.get("local_openbench_path", "")
-                    if saved_path and os.path.isdir(saved_path):
-                        project_root = saved_path
-                        logger.info(f"Using saved OpenBench path: {project_root}")
-        except Exception as e:
-            logger.debug(f"Could not load saved OpenBench path: {e}")
-
-        # Fall back to auto-detection
-        if not project_root:
-            project_root = get_openbench_root()
+        # Always use auto-detection for fresh start (no cached paths)
+        project_root = get_openbench_root()
 
         self.controller.project_root = project_root
         self.controller.storage = LocalStorage(project_root)
 
-        # Try to load existing project config
-        self._try_load_project_config()
+        # Don't load existing project config - start fresh each time
 
     def setup_remote_storage(self, ssh_manager, remote_project_dir: str):
         """Setup remote storage when user connects via Runtime Environment page.
