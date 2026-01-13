@@ -116,7 +116,7 @@ class PageGeneral(BasePage):
         # Resolution
         st_layout.addWidget(QLabel("Time Resolution:"), 4, 0)
         self.tim_res_combo = NoScrollComboBox()
-        self.tim_res_combo.addItems(["month", "day", "hour", "year"])
+        self.tim_res_combo.addItems(["month", "day", "hour", "year", "Climatology-month", "Climatology-year"])
         st_layout.addWidget(self.tim_res_combo, 4, 1)
 
         st_layout.addWidget(QLabel("Grid Resolution:"), 4, 2)

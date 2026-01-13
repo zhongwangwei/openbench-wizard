@@ -238,7 +238,7 @@ class DataSourceEditor(QDialog):
 
         # Time resolution
         self.tim_res_combo = NoScrollComboBox()
-        self.tim_res_combo.addItems(["Month", "Day", "Hour", "Year"])
+        self.tim_res_combo.addItems(["Month", "Day", "Hour", "Year", "Climatology-month", "Climatology-year"])
         time_layout.addRow("Time Resolution:", self.tim_res_combo)
 
         # Per-variable time range checkbox

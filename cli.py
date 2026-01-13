@@ -364,7 +364,7 @@ ref_data:
     varname: GPP
     syear: 2000
     eyear: 2020
-    tim_res: monthly
+    tim_res: monthly  # Options: month, day, hour, year, Climatology-month, Climatology-year
     nlon: 720
     nlat: 360
     geo_res: 0.5
@@ -377,7 +377,7 @@ sim_data:
     varname: GPP
     syear: 2000
     eyear: 2020
-    tim_res: monthly
+    tim_res: monthly  # Options: month, day, hour, year, Climatology-month, Climatology-year
     nlon: 720
     nlat: 360
     geo_res: 0.5
